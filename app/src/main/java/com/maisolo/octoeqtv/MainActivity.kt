@@ -5,9 +5,6 @@ import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.os.Bundle
-import android.view.Gravity
-import android.view.KeyEvent
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -62,18 +59,22 @@ class MainActivity : Activity() {
                 val hz = eq!!.getCenterFreq(band) / 1000
                 val min = range[0].toInt()
                 val max = range[1].toInt()
-                addSlider(content, "${hz} Hz", min, max, prefs.getInt("band_$i", eq!!.getBandLevel(band).toInt())) {
+                val saved = prefs.getInt("band_$i", eq!!.getBandLevel(band).toInt()).coerceIn(min, max)
+                runCatching { eq?.setBandLevel(band, saved.toShort()) }
+                addSlider(content, "${hz} Hz", min, max, saved) {
                     eq?.setBandLevel(band, it.toShort())
                     prefs.edit().putInt("band_$i", it).apply()
                 }
             }
             text(content, "Graves et spatialisation", 21f)
             bass?.let { effect ->
+                runCatching { effect.setStrength(prefs.getInt("bass", 0).coerceIn(0, 1000).toShort()) }
                 addSlider(content, "Bass Boost", 0, 1000, prefs.getInt("bass", 0)) {
                     effect.setStrength(it.toShort()); prefs.edit().putInt("bass", it).apply()
                 }
             } ?: text(content, "Bass Boost non disponible sur cet appareil.", 16f)
             virtualizer?.let { effect ->
+                runCatching { effect.setStrength(prefs.getInt("surround", 0).coerceIn(0, 1000).toShort()) }
                 addSlider(content, "Surround virtuel (dépend de la sortie audio)", 0, 1000, prefs.getInt("surround", 0)) {
                     effect.setStrength(it.toShort()); prefs.edit().putInt("surround", it).apply()
                 }
@@ -119,7 +120,7 @@ class MainActivity : Activity() {
         slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) runCatching { change(progress + min) }
-                labelView.text = "$label  •  ${(progress + min) / 100f} dB/force"
+                labelView.text = "$label  •  ${progress + min}"
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
