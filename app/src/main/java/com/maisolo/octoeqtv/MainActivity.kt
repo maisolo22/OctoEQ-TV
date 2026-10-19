@@ -151,7 +151,7 @@ class MainActivity : Activity() {
         outer.addView(footer)
         addButton(footer, "↺  Réinitialiser") { applyPreset("Plat"); prefs.edit().putInt("bass", 0).putInt("surround", 0).apply(); buildScreen(); applyAll() }
         addButton(footer, "✓  Enregistrer") { prefs.edit().putBoolean("enabled", enabled).apply(); Toast.makeText(this, "Réglages enregistrés", Toast.LENGTH_SHORT).show() }
-        footer.addView(text("◀ ▶ sélection • ▲ ▼ régler • OK valider", 12f, muted))
+        footer.addView(text("◀ ▶ bandes • ▲ ▼ naviguer • OK régler/valider • Retour quitter", 12f, muted))
     }
 
     private fun renderBands() {
@@ -262,23 +262,57 @@ class MainActivity : Activity() {
     private inner class BandSlider(context: Context, private val caption: String, private var level: Int,
         private val min: Int, private val max: Int, private val color: Int, private val changed: (Int) -> Unit) : View(context) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        init { isFocusable = true; isClickable = true; contentDescription = "Fréquence $caption" }
-        override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
-            val delta = when (keyCode) {
+        private var editing = false
+        init {
+            isFocusable = true
+            isClickable = true
+            contentDescription = "Fréquence $caption. OK pour régler."
+        }
+        private fun setEditing(value: Boolean) {
+            editing = value
+            contentDescription = "Fréquence $caption. " +
+                if (editing) "Réglage actif, haut et bas pour modifier, OK pour valider."
+                else "Navigation, haut pour EQ activé, bas pour préréglages, OK pour régler."
+            invalidate()
+        }
+        override fun performClick(): Boolean {
+            super.performClick()
+            setEditing(!editing)
+            return true
+        }
+        override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                    if (event.repeatCount == 0) performClick()
+                    return true
+                }
+                KeyEvent.KEYCODE_BACK -> {
+                    if (editing) { setEditing(false); return true }
+                }
                 KeyEvent.KEYCODE_DPAD_UP -> {
-                    // At the upper limit, leave the slider and navigate to EQ power.
-                    if (level >= max) { power.requestFocus(); return true }
-                    100
+                    if (!editing) {
+                        setEditing(false)
+                        power.requestFocus()
+                        return true
+                    }
+                    level = (level + 100).coerceIn(min, max)
+                    changed(level); invalidate(); return true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    // At the lower limit, leave the slider and navigate to presets.
-                    if (level <= min) { presetBox.getChildAt(0)?.requestFocus(); return true }
-                    -100
+                    if (!editing) {
+                        setEditing(false)
+                        presetBox.getChildAt(0)?.requestFocus()
+                        return true
+                    }
+                    level = (level - 100).coerceIn(min, max)
+                    changed(level); invalidate(); return true
                 }
-                else -> return super.onKeyDown(keyCode, event)
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    // Horizontal navigation always remains available, including in edit mode.
+                    setEditing(false)
+                }
             }
-            level = (level + delta).coerceIn(min, max)
-            changed(level); invalidate(); return true
+            return super.onKeyDown(keyCode, event)
         }
         override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
             if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
@@ -298,13 +332,13 @@ class MainActivity : Activity() {
             val bottom = height - dp(52).toFloat()
             val frac = if (max == min) 0.5f else (level - min).toFloat() / (max - min)
             val y = bottom - frac * (bottom - top)
-            p.color = if (isFocused) 0xff1b5284.toInt() else panel
+            p.color = if (editing) 0xff185c49.toInt() else if (isFocused) 0xff1b5284.toInt() else panel
             canvas.drawRoundRect(2f, 3f, width - 2f, height - 3f, dp(9).toFloat(), dp(9).toFloat(), p)
             p.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             p.textAlign = Paint.Align.CENTER
             p.textSize = dp(13).toFloat()
             p.color = white
-            canvas.drawText(String.format(Locale.US, "%+.0f", level / 100f), mid, dp(27).toFloat(), p)
+            canvas.drawText(String.format(Locale.US, "%+.0f", level / 100f), mid, dp(27).toFloat(), p)\n            if (editing) { p.color = 0xff37ed6f.toInt(); p.textSize = dp(10).toFloat(); canvas.drawText("RÉGLAGE", mid, dp(43).toFloat(), p) }
             p.color = 0xff34435a.toInt(); p.strokeWidth = dp(9).toFloat(); p.strokeCap = Paint.Cap.ROUND
             canvas.drawLine(mid, top, mid, bottom, p)
             p.color = color
@@ -316,7 +350,7 @@ class MainActivity : Activity() {
             canvas.drawText(caption, mid, height - dp(19).toFloat(), p)
         }
         override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
-            super.onFocusChanged(gainFocus, direction, previouslyFocusedRect); invalidate()
+            if (!gainFocus) setEditing(false)\n            super.onFocusChanged(gainFocus, direction, previouslyFocusedRect); invalidate()
         }
     }
 }
