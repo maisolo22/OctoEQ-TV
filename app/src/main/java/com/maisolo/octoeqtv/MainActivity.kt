@@ -65,7 +65,7 @@ class MainActivity : Activity() {
         text = s; textSize = size; setTextColor(color); gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(5), dp(5), dp(5), dp(5))
     }
-    private fun section(s: String) = text(s, 21f).apply { setTypeface(null, 1) }
+    private fun section(s: String) = text(s, 21f).apply { setTypeface(null, Typeface.BOLD) }
     private fun column(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     private fun row(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
     private fun background(color: Int, radius: Int = 16): android.graphics.drawable.GradientDrawable =
@@ -118,7 +118,7 @@ class MainActivity : Activity() {
         val header = row()
         outer.addView(header)
         val brand = column()
-        brand.addView(text("◉  OctoEQ TV", 26f, cyan).apply { setTypeface(null, 1) })
+        brand.addView(text("◉  OctoEQ TV", 26f, cyan).apply { setTypeface(null, Typeface.BOLD) })
         brand.addView(text("POWER YOUR SOUND", 11f, muted))
         header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
         power = addButton(header, if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ") {
@@ -233,7 +233,7 @@ class MainActivity : Activity() {
 
     private fun effectPanel(title: String, subtitle: String, key: String, color: Int, available: Boolean, apply: (Int) -> Unit): LinearLayout {
         val p = column().apply { background = background(panel); setPadding(dp(12), dp(8), dp(12), dp(8)) }
-        p.addView(text(title, 17f, color).apply { setTypeface(null, 1) })
+        p.addView(text(title, 17f, color).apply { setTypeface(null, Typeface.BOLD) })
         p.addView(text(if (available) subtitle else "Non pris en charge", 12f, muted))
         val controls = row()
         p.addView(controls)
