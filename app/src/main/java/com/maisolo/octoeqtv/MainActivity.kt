@@ -1,175 +1,304 @@
 package com.maisolo.octoeqtv
 
 import android.app.Activity
+import android.content.Context
+import android.graphics.*
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.os.Bundle
-import android.graphics.Color
-import android.view.Gravity
-import android.widget.Button
-import android.widget.HorizontalScrollView
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.view.*
+import android.widget.*
+import java.util.Locale
+import kotlin.math.roundToInt
 
-/** Global audio session 0 is deprecated. Not all TV audio routes/apps support these effects. */
+/**
+ * Android TV studio. Uses the number of EQ bands actually exposed by the device.
+ * Session 0 is deprecated: effects may not work outside this app.
+ */
 @Suppress("DEPRECATION")
 class MainActivity : Activity() {
+    private val bg = Color.rgb(7, 13, 27)
+    private val panel = Color.rgb(14, 27, 47)
+    private val cyan = Color.rgb(29, 171, 255)
+    private val white = Color.WHITE
+    private val muted = Color.rgb(168, 190, 218)
+    private val palette = intArrayOf(0xff37ed6f.toInt(), 0xff12ddc9.toInt(), 0xff16b6ff.toInt(), 0xff8e65ff.toInt(), 0xffef48c1.toInt(), 0xffffa827.toInt())
+    private val prefs by lazy { getSharedPreferences("studio", MODE_PRIVATE) }
     private var eq: Equalizer? = null
     private var bass: BassBoost? = null
     private var virtualizer: Virtualizer? = null
-    private val prefs by lazy { getSharedPreferences("eq", MODE_PRIVATE) }
-    private val ink = Color.WHITE
-    private val accent = Color.rgb(41, 210, 151)
-    private lateinit var board: LinearLayout
-    private lateinit var state: TextView
     private var enabled = true
+    private var bandMin = -1200
+    private var bandMax = 1200
+    private var count = 0
+    private val values = mutableListOf<Int>()
+    private lateinit var eqStrip: LinearLayout
+    private lateinit var state: TextView
+    private lateinit var power: Button
+    private lateinit var presetBox: LinearLayout
+    private var activePreset = "Personnalisé"
 
-    private fun label(parent: LinearLayout, s: String, size: Float = 17f): TextView =
-        TextView(this).apply {
-            text = s; textSize = size; setTextColor(ink); gravity = Gravity.CENTER
-            setPadding(8, 9, 8, 9); parent.addView(this)
-        }
-
-    private fun button(parent: LinearLayout, s: String, action: () -> Unit): Button =
-        Button(this).apply {
-            text = s; isFocusable = true
-            setOnClickListener { action() }
-            parent.addView(this)
-        }
-
-    private fun column(parent: LinearLayout, title: String, min: Int, max: Int, initial: Int, step: Int, apply: (Int) -> Unit) {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            setPadding(7, 8, 7, 8)
-        }
-        parent.addView(col, LinearLayout.LayoutParams(118, -2))
-        label(col, title, 14f)
-        var current = initial.coerceIn(min, max)
-        val value = label(col, formatDb(current), 15f)
-        val meter = TextView(this).apply {
-            gravity = Gravity.CENTER; textSize = 17f; setTextColor(accent)
-            setBackgroundColor(0xff1b2930.toInt())
-        }
-        col.addView(meter, LinearLayout.LayoutParams(78, 124))
-        fun refresh() {
-            val fraction = if (max == min) 0f else (current - min).toFloat() / (max - min)
-            val blocks = (fraction * 10).toInt().coerceIn(0, 10)
-            meter.text = (0 until 10).joinToString("\n") { if (it < 10 - blocks) "·" else "▰" }
-            value.text = formatDb(current)
-        }
-        button(col, "＋") { current = (current + step).coerceAtMost(max); apply(current); refresh() }
-        button(col, "－") { current = (current - step).coerceAtLeast(min); apply(current); refresh() }
-        refresh()
+    private fun dp(x: Int) = (x * resources.displayMetrics.density).roundToInt()
+    private fun text(s: String, size: Float, color: Int = white): TextView = TextView(this).apply {
+        text = s; textSize = size; setTextColor(color); gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(5), dp(5), dp(5), dp(5))
     }
-
-    private fun formatDb(mb: Int) = String.format(java.util.Locale.US, "%+.1f dB", mb / 100f)
+    private fun section(s: String) = text(s, 21f).apply { setTypeface(null, 1) }
+    private fun column(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    private fun row(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+    private fun background(color: Int, radius: Int = 16): android.graphics.drawable.GradientDrawable =
+        android.graphics.drawable.GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
+    private fun button(s: String, action: () -> Unit): Button = Button(this).apply {
+        text = s; isAllCaps = false; textSize = 14f; setTextColor(white)
+        background = background(0xff173352.toInt(), 11)
+        isFocusable = true
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        setOnClickListener { action() }
+        setOnFocusChangeListener { _, focused ->
+            background = background(if (focused) 0xff176ac0.toInt() else 0xff173352.toInt(), 11)
+            scaleX = if (focused) 1.04f else 1f
+            scaleY = if (focused) 1.04f else 1f
+        }
+    }
+    private fun addButton(parent: LinearLayout, title: String, action: () -> Unit): Button =
+        button(title, action).also {
+            parent.addView(it, LinearLayout.LayoutParams(-2, dp(46)).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(26, 18, 26, 16)
-            setBackgroundColor(0xff10131b.toInt())
-        }
-        setContentView(root)
-        label(root, "OCTOEQ TV  •  STUDIO AUDIO", 25f)
-        state = label(root, "Initialisation…", 15f)
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        root.addView(actions)
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         enabled = prefs.getBoolean("enabled", true)
-        val power = button(actions, "") {
-            enabled = !enabled; prefs.edit().putBoolean("enabled", enabled).apply()
-            applyEnabled(); updatePower()
-        }
-        funPower@ run { /* controls initialized before effect discovery */ }
-        val reset = button(actions, "Remise à zéro") {
-            val effect = eq ?: return@button
-            for (i in 0 until effect.numberOfBands.toInt()) {
-                runCatching { effect.setBandLevel(i.toShort(), 0) }
-                prefs.edit().putInt("band_$i", 0).apply()
-            }
-            runCatching { bass?.setStrength(0); virtualizer?.setStrength(0) }
-            prefs.edit().putInt("bass", 0).putInt("surround", 0).apply()
-            recreate()
-        }
-        val presets = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        root.addView(presets)
-        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true }
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        board = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        scroll.addView(board)
-        try {
-            eq = Equalizer(0, 0)
-            bass = runCatching { BassBoost(0, 0) }.getOrNull()
-            virtualizer = runCatching { Virtualizer(0, 0) }.getOrNull()
-            val effect = eq!!
-            val count = effect.numberOfBands.toInt()
-            val min = effect.bandLevelRange[0].toInt()
-            val max = effect.bandLevelRange[1].toInt()
-            val step = 100
-            fun preset(name: String, shape: (Int, Int) -> Int) {
-                button(presets, name) {
-                    for (i in 0 until count) {
-                        val level = shape(i, count).coerceIn(min, max)
-                        runCatching { effect.setBandLevel(i.toShort(), level.toShort()) }
-                        prefs.edit().putInt("band_$i", level).apply()
-                    }
-                    recreate()
-                }
-            }
-            preset("Plat") { _, _ -> 0 }
-            preset("Basses +") { i, n -> if (i < n / 3) 500 else 0 }
-            preset("Aigus +") { i, n -> if (i >= n * 2 / 3) 500 else 0 }
-            preset("Vocal") { i, n -> if (i in n / 3..n * 2 / 3) 300 else -100 }
-            for (i in 0 until count) {
-                val band = i.toShort()
-                val freq = effect.getCenterFreq(band) / 1000
-                val name = if (freq >= 1000) "${freq / 1000f}k" else "${freq}Hz"
-                val current = prefs.getInt("band_$i", 0).coerceIn(min, max)
-                runCatching { effect.setBandLevel(band, current.toShort()) }
-                column(board, name, min, max, current, step) {
-                    runCatching { effect.setBandLevel(band, it.toShort()) }
-                    prefs.edit().putInt("band_$i", it).apply()
-                }
-            }
-            bass?.let { b ->
-                val current = prefs.getInt("bass", 0).coerceIn(0, 1000)
-                runCatching { b.setStrength(current.toShort()) }
-                column(board, "BASS", 0, 1000, current, 100) {
-                    runCatching { b.setStrength(it.toShort()) }
-                    prefs.edit().putInt("bass", it).apply()
-                }
-            }
-            virtualizer?.let { v ->
-                val current = prefs.getInt("surround", 0).coerceIn(0, 1000)
-                runCatching { v.setStrength(current.toShort()) }
-                column(board, "WIDE", 0, 1000, current, 100) {
-                    runCatching { v.setStrength(it.toShort()) }
-                    prefs.edit().putInt("surround", it).apply()
-                }
-            }
-            applyEnabled()
-            state.text = "Mode global expérimental • $count bandes matérielles • Réglages mémorisés, effet après fermeture non garanti"
-        } catch (e: Exception) {
-            state.text = "Effets audio indisponibles sur cette TV : ${e.javaClass.simpleName}"
-        }
-        power.text = if (enabled) "EQ ACTIVÉ" else "EQ DÉSACTIVÉ"
-        label(root, "◀ ▶ : changer de commande     OK : ajuster     •     Pas de traitement garanti pour toutes les applications", 13f)
+        initEffects()
+        buildScreen()
+        applyAll()
     }
 
-    private fun updatePower() {
-        val root = (findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup)
-        val main = root.getChildAt(0) as? LinearLayout ?: return
-        val actions = main.getChildAt(2) as? LinearLayout ?: return
-        (actions.getChildAt(0) as? Button)?.text = if (enabled) "EQ ACTIVÉ" else "EQ DÉSACTIVÉ"
+    private fun initEffects() {
+        eq = runCatching { Equalizer(0, 0) }.getOrNull()
+        bass = runCatching { BassBoost(0, 0) }.getOrNull()
+        virtualizer = runCatching { Virtualizer(0, 0) }.getOrNull()
+        count = eq?.numberOfBands?.toInt() ?: 0
+        eq?.bandLevelRange?.let { bandMin = it[0].toInt(); bandMax = it[1].toInt() }
+        values.clear()
+        for (i in 0 until count) values.add(prefs.getInt("band_$i", 0).coerceIn(bandMin, bandMax))
     }
+
+    private fun buildScreen() {
+        val outer = column().apply { setBackgroundColor(bg); setPadding(dp(18), dp(12), dp(18), dp(12)) }
+        setContentView(outer)
+        val header = row()
+        outer.addView(header)
+        val brand = column()
+        brand.addView(text("◉  OctoEQ TV", 26f, cyan).apply { setTypeface(null, 1) })
+        brand.addView(text("POWER YOUR SOUND", 11f, muted))
+        header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
+        power = addButton(header, if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ") {
+            enabled = !enabled
+            prefs.edit().putBoolean("enabled", enabled).apply()
+            applyEnabled()
+            power.text = if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ"
+        }
+        state = text("", 12f, muted)
+        outer.addView(state)
+        state.text = if (count == 0) "Égaliseur matériel indisponible : commandes EQ désactivées." else
+            "$count bandes prises en charge par Android • mode global expérimental (session 0) • pas de garantie pour les autres applications"
+        val mainScroll = ScrollView(this).apply { isFillViewport = true }
+        outer.addView(mainScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val body = column()
+        mainScroll.addView(body)
+        val spectrum = SpectrumView(this)
+        body.addView(spectrum, LinearLayout.LayoutParams(-1, dp(100)).apply { bottomMargin = dp(12) })
+        val eqPanel = column().apply { background = background(panel); setPadding(dp(14), dp(10), dp(14), dp(10)) }
+        body.addView(eqPanel, LinearLayout.LayoutParams(-1, -2))
+        val eqHeader = row()
+        eqPanel.addView(eqHeader)
+        eqHeader.addView(section("Égaliseur graphique"), LinearLayout.LayoutParams(0, -2, 1f))
+        eqHeader.addView(text("$count bandes disponibles", 13f, muted))
+        eqPanel.addView(text("Les fréquences et le gain maximal dépendent du matériel Android.", 12f, muted))
+        val horizontal = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true }
+        eqPanel.addView(horizontal, LinearLayout.LayoutParams(-1, dp(275)))
+        eqStrip = row()
+        horizontal.addView(eqStrip)
+        renderBands()
+        body.addView(text("PRÉRÉGLAGES", 15f, muted))
+        val presetScroll = HorizontalScrollView(this)
+        body.addView(presetScroll)
+        presetBox = row()
+        presetScroll.addView(presetBox)
+        val presets = listOf("Plat", "Basses +", "Aigus +", "Vocal", "Pop", "Rock", "Jazz", "Cinéma", "Concert")
+        presets.forEach { name -> addButton(presetBox, name) { applyPreset(name) } }
+        body.addView(text("EFFETS SONORES", 15f, muted))
+        val effects = row()
+        body.addView(effects)
+        effects.addView(effectPanel("BASSES", "Bass Boost", "bass", 0xff8d6bff.toInt(), bass != null) { v ->
+            runCatching { bass?.setStrength(v.toShort()) }
+        }, LinearLayout.LayoutParams(0, dp(135), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        effects.addView(effectPanel("SURROUND", "Spatialisation", "surround", 0xffef48c1.toInt(), virtualizer != null) { v ->
+            runCatching { virtualizer?.setStrength(v.toShort()) }
+        }, LinearLayout.LayoutParams(0, dp(135), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        val footer = row()
+        outer.addView(footer)
+        addButton(footer, "↺  Réinitialiser") { applyPreset("Plat"); prefs.edit().putInt("bass", 0).putInt("surround", 0).apply(); buildScreen(); applyAll() }
+        addButton(footer, "✓  Enregistrer") { prefs.edit().putBoolean("enabled", enabled).apply(); Toast.makeText(this, "Réglages enregistrés", Toast.LENGTH_SHORT).show() }
+        footer.addView(text("◀ ▶ sélection • ▲ ▼ régler • OK valider", 12f, muted))
+    }
+
+    private fun renderBands() {
+        eqStrip.removeAllViews()
+        if (count == 0) {
+            eqStrip.addView(text("Aucune bande disponible sur cet appareil", 16f))
+            return
+        }
+        for (i in 0 until count) {
+            val freq = eq?.getCenterFreq(i.toShort())?.div(1000) ?: 0
+            val caption = if (freq >= 1000) String.format(Locale.US, "%.1fk", freq / 1000f) else "$freq"
+            val band = i
+            val view = BandSlider(this, caption, values[i], bandMin, bandMax, palette[i * palette.size / count]) { new ->
+                values[band] = new
+                prefs.edit().putInt("band_$band", new).apply()
+                activePreset = "Personnalisé"
+                if (enabled) runCatching { eq?.setBandLevel(band.toShort(), new.toShort()) }
+            }
+            eqStrip.addView(view, LinearLayout.LayoutParams(dp(67), dp(265)))
+        }
+    }
+
+    private fun applyPreset(name: String) {
+        activePreset = name
+        val gains = when (name) {
+            "Basses +" -> intArrayOf(700, 650, 500, 300, 100, 0, 0, 0, 0, 0)
+            "Aigus +" -> intArrayOf(0, 0, 0, 0, 0, 0, 100, 350, 550, 650)
+            "Vocal" -> intArrayOf(-200, -100, 0, 100, 250, 450, 450, 250, 0, -100)
+            "Pop" -> intArrayOf(350, 250, 0, -100, 0, 200, 250, 300, 250, 200)
+            "Rock" -> intArrayOf(450, 300, 100, -100, -200, 100, 300, 400, 450, 350)
+            "Jazz" -> intArrayOf(250, 150, 0, 100, 200, 150, 200, 300, 250, 200)
+            "Cinéma" -> intArrayOf(500, 450, 250, 0, 0, 100, 200, 300, 350, 300)
+            "Concert" -> intArrayOf(300, 250, 150, 50, 0, 0, 100, 250, 350, 350)
+            else -> IntArray(10)
+        }
+        for (i in 0 until count) {
+            val index = if (count == 1) 0 else (i * 9f / (count - 1)).roundToInt()
+            val value = gains[index].coerceIn(bandMin, bandMax)
+            values[i] = value
+            prefs.edit().putInt("band_$i", value).apply()
+        }
+        applyAll()
+        renderBands()
+        Toast.makeText(this, "Profil : $name", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun effectPanel(title: String, subtitle: String, key: String, color: Int, available: Boolean, apply: (Int) -> Unit): LinearLayout {
+        val p = column().apply { background = background(panel); setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        p.addView(text(title, 17f, color).apply { setTypeface(null, 1) })
+        p.addView(text(if (available) subtitle else "Non pris en charge", 12f, muted))
+        val controls = row()
+        p.addView(controls)
+        val display = text("", 18f)
+        var value = prefs.getInt(key, 0).coerceIn(0, 1000)
+        fun update() { display.text = "${value / 10} %" }
+        update()
+        addButton(controls, "−") {
+            value = (value - 100).coerceAtLeast(0)
+            prefs.edit().putInt(key, value).apply()
+            if (enabled) apply(value)
+            update()
+        }.isEnabled = available
+        controls.addView(display, LinearLayout.LayoutParams(0, -2, 1f))
+        addButton(controls, "+") {
+            value = (value + 100).coerceAtMost(1000)
+            prefs.edit().putInt(key, value).apply()
+            if (enabled) apply(value)
+            update()
+        }.isEnabled = available
+        return p
+    }
+
     private fun applyEnabled() {
         runCatching { eq?.enabled = enabled }
         runCatching { bass?.enabled = enabled }
         runCatching { virtualizer?.enabled = enabled }
     }
+    private fun applyAll() {
+        for (i in 0 until count) runCatching { eq?.setBandLevel(i.toShort(), values[i].toShort()) }
+        runCatching { bass?.setStrength(prefs.getInt("bass", 0).coerceIn(0, 1000).toShort()) }
+        runCatching { virtualizer?.setStrength(prefs.getInt("surround", 0).coerceIn(0, 1000).toShort()) }
+        applyEnabled()
+    }
     override fun onDestroy() {
         eq?.release(); bass?.release(); virtualizer?.release()
         super.onDestroy()
+    }
+
+    private inner class SpectrumView(context: Context) : View(context) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            canvas.drawColor(panel)
+            val bars = 62
+            for (i in 0 until bars) {
+                val x = width * (i + 0.5f) / bars
+                val fraction = (0.15 + 0.65 * kotlin.math.abs(kotlin.math.sin(i * 0.23) * kotlin.math.cos(i * 0.13))).toFloat()
+                val h = height * fraction
+                paint.color = palette[i * palette.size / bars]
+                paint.strokeWidth = (width.toFloat() / bars * 0.56f).coerceAtLeast(2f)
+                paint.strokeCap = Paint.Cap.ROUND
+                canvas.drawLine(x, height * 0.86f, x, height * 0.86f - h * 0.74f, paint)
+            }
+        }
+    }
+
+    private inner class BandSlider(context: Context, private val caption: String, private var level: Int,
+        private val min: Int, private val max: Int, private val color: Int, private val changed: (Int) -> Unit) : View(context) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        init { isFocusable = true; isClickable = true; contentDescription = "Fréquence $caption" }
+        override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+            val delta = when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> 100
+                KeyEvent.KEYCODE_DPAD_DOWN -> -100
+                else -> return super.onKeyDown(keyCode, event)
+            }
+            level = (level + delta).coerceIn(min, max)
+            changed(level); invalidate(); return true
+        }
+        override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+            if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
+                requestFocus()
+                val top = dp(50).toFloat()
+                val bottom = height - dp(52).toFloat()
+                val fraction = ((bottom - event.y) / (bottom - top)).coerceIn(0f, 1f)
+                level = (min + fraction * (max - min)).roundToInt().coerceIn(min, max)
+                changed(level); invalidate(); return true
+            }
+            return super.onTouchEvent(event)
+        }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val mid = width / 2f
+            val top = dp(50).toFloat()
+            val bottom = height - dp(52).toFloat()
+            val frac = if (max == min) 0.5f else (level - min).toFloat() / (max - min)
+            val y = bottom - frac * (bottom - top)
+            p.color = if (isFocused) 0xff1b5284.toInt() else panel
+            canvas.drawRoundRect(2f, 3f, width - 2f, height - 3f, dp(9).toFloat(), dp(9).toFloat(), p)
+            p.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            p.textAlign = Paint.Align.CENTER
+            p.textSize = dp(13).toFloat()
+            p.color = white
+            canvas.drawText(String.format(Locale.US, "%+.0f", level / 100f), mid, dp(27).toFloat(), p)
+            p.color = 0xff34435a.toInt(); p.strokeWidth = dp(9).toFloat(); p.strokeCap = Paint.Cap.ROUND
+            canvas.drawLine(mid, top, mid, bottom, p)
+            p.color = color
+            canvas.drawLine(mid, y, mid, bottom, p)
+            p.color = white
+            canvas.drawCircle(mid, y, dp(if (isFocused) 12 else 9).toFloat(), p)
+            p.color = if (isFocused) cyan else muted
+            p.textSize = dp(12).toFloat()
+            canvas.drawText(caption, mid, height - dp(19).toFloat(), p)
+        }
+        override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
+            super.onFocusChanged(gainFocus, direction, previouslyFocusedRect); invalidate()
+        }
     }
 }
