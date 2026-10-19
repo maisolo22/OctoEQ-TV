@@ -37,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var state: TextView
     private lateinit var power: Button
     private lateinit var presetBox: LinearLayout
+    private lateinit var mainScroll: ScrollView
+    private lateinit var presetScroll: HorizontalScrollView
     private var activePreset = "Personnalisé"
 
     private fun dp(x: Int) = (x * resources.displayMetrics.density).roundToInt()
@@ -100,11 +102,12 @@ class MainActivity : Activity() {
             applyEnabled()
             power.text = if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ"
         }
+        power.id = View.generateViewId()
         state = text("", 12f, muted)
         outer.addView(state)
         state.text = if (count == 0) "Égaliseur matériel indisponible : commandes EQ désactivées." else
             "$count bandes prises en charge par Android • mode global expérimental (session 0) • pas de garantie pour les autres applications"
-        val mainScroll = ScrollView(this).apply { isFillViewport = true }
+        mainScroll = ScrollView(this).apply { isFillViewport = true }
         outer.addView(mainScroll, LinearLayout.LayoutParams(-1, 0, 1f))
         val body = column()
         mainScroll.addView(body)
@@ -123,12 +126,18 @@ class MainActivity : Activity() {
         horizontal.addView(eqStrip)
         renderBands()
         body.addView(text("PRÉRÉGLAGES", 15f, muted))
-        val presetScroll = HorizontalScrollView(this)
+        presetScroll = HorizontalScrollView(this)
         body.addView(presetScroll)
         presetBox = row()
         presetScroll.addView(presetBox)
         val presets = listOf("Plat", "Basses +", "Aigus +", "Vocal", "Pop", "Rock", "Jazz", "Cinéma", "Concert")
-        presets.forEach { name -> addButton(presetBox, name) { applyPreset(name) } }
+        presets.forEach { name -> addButton(presetBox, name) { applyPreset(name) }.id = View.generateViewId() }
+        // Explicit focus exits: UP from EQ returns to power; DOWN enters presets.
+        for (i in 0 until eqStrip.childCount) {
+            val band = eqStrip.getChildAt(i)
+            band.nextFocusUpId = power.id
+            band.nextFocusDownId = presetBox.getChildAt(i.coerceAtMost(presetBox.childCount - 1)).id
+        }
         body.addView(text("EFFETS SONORES", 15f, muted))
         val effects = row()
         body.addView(effects)
@@ -161,6 +170,7 @@ class MainActivity : Activity() {
                 activePreset = "Personnalisé"
                 if (enabled) runCatching { eq?.setBandLevel(band.toShort(), new.toShort()) }
             }
+            view.id = View.generateViewId()
             eqStrip.addView(view, LinearLayout.LayoutParams(dp(67), dp(265)))
         }
     }
@@ -255,8 +265,16 @@ class MainActivity : Activity() {
         init { isFocusable = true; isClickable = true; contentDescription = "Fréquence $caption" }
         override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
             val delta = when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP -> 100
-                KeyEvent.KEYCODE_DPAD_DOWN -> -100
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    // At the upper limit, leave the slider and navigate to EQ power.
+                    if (level >= max) { power.requestFocus(); return true }
+                    100
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    // At the lower limit, leave the slider and navigate to presets.
+                    if (level <= min) { presetBox.getChildAt(0)?.requestFocus(); return true }
+                    -100
+                }
                 else -> return super.onKeyDown(keyCode, event)
             }
             level = (level + delta).coerceIn(min, max)
