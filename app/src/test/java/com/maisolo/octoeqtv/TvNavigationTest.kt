@@ -35,6 +35,14 @@ class TvNavigationTest {
         var gain = 0
         val changed: (Int) -> Unit = { gain = it }
         val slider = constructor.newInstance(activity, activity, "1k", 0, -1200, 1200, -1, changed) as View
+        val strip = activity.javaClass.getDeclaredField("eqStrip").apply { isAccessible = true }.get(activity) as android.widget.LinearLayout
+        strip.removeAllViews()
+        strip.addView(slider, android.widget.LinearLayout.LayoutParams(0, 214, 1f))
+        val scroll = strip.parent as android.widget.HorizontalScrollView
+        assertTrue(scroll.isFillViewport)
+        scroll.measure(View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY))
+        scroll.layout(0, 0, 800, 240)
+        assertTrue("Band must have a visible width", slider.width > 0)
         fun key(action: Int, code: Int) = slider.dispatchKeyEvent(KeyEvent(action, code))
         key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER)
         key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER)

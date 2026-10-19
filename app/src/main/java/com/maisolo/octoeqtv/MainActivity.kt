@@ -92,6 +92,10 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         enabled = prefs.getBoolean("enabled", true)
         buildScreen()
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED && !prefs.getBoolean("notification_asked", false)) {
+            prefs.edit().putBoolean("notification_asked", true).apply()
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
         val service = Intent(this, AudioService::class.java)
         try {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
@@ -122,6 +126,7 @@ class MainActivity : Activity() {
             prefs.edit().putBoolean("enabled", enabled).apply()
             applyEnabled()
             power.text = if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ"
+            power.contentDescription = power.text
         }
         power.id = View.generateViewId()
         power.contentDescription = power.text
@@ -142,7 +147,7 @@ class MainActivity : Activity() {
         eqHeader.addView(section("Égaliseur graphique"), LinearLayout.LayoutParams(0, -2, 1f))
         eqHeader.addView(text("$count bandes disponibles", 13f, muted))
         eqPanel.addView(text("OK : régler / valider  •  En navigation : ↑ alimentation, ↓ profils  •  Courbe décorative", 12f, muted))
-        val horizontal = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true }
+        val horizontal = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true; isFillViewport = true }
         eqPanel.addView(horizontal, LinearLayout.LayoutParams(-1, dp(224)))
         eqStrip = row()
         horizontal.addView(eqStrip, android.widget.FrameLayout.LayoutParams(-1, -1))
