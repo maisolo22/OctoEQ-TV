@@ -1,5 +1,11 @@
 package com.maisolo.octoeqtv
 
+import android.content.ComponentName
+import android.content.Intent
+import org.junit.Before
+import org.junit.After
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.RuntimeEnvironment
 import android.view.KeyEvent
 import android.view.View
 import org.junit.Assert.*
@@ -12,6 +18,15 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class TvNavigationTest {
+    private lateinit var service: org.robolectric.android.controller.ServiceController<AudioService>
+    @Before fun connectRealServiceBinder() {
+        service = Robolectric.buildService(AudioService::class.java).create()
+        val app = RuntimeEnvironment.getApplication()
+        shadowOf(app).setComponentNameAndServiceForBindService(
+            ComponentName(app, AudioService::class.java), service.get().onBind(Intent()))
+    }
+    @After fun releaseService() { service.destroy() }
+
     @Test fun remoteConfirmsOnReleaseAndBackExitsWithoutChangingGain() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
