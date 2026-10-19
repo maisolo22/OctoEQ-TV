@@ -4,7 +4,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <application android:label="OctoEQ TV" android:theme="@android:style/Theme.Material.NoActionBar"
-        android:usesCleartextTraffic="false" android:allowBackup="true">
+        android:usesCleartextTraffic="false" android:allowBackup="true" android:icon="@drawable/ic_octoeq" android:banner="@drawable/ic_octoeq">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
