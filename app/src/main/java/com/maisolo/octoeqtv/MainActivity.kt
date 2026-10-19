@@ -2,6 +2,11 @@ package com.maisolo.octoeqtv
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.os.Build
 import android.graphics.*
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
@@ -41,6 +46,20 @@ class MainActivity : Activity() {
     private lateinit var presetScroll: HorizontalScrollView
     private var activePreset = "Personnalisé"
 
+    private var bound = false
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            val engine = (binder as AudioService.LocalBinder).service
+            eq = engine.eq; bass = engine.bass; virtualizer = engine.virtualizer
+            enabled = prefs.getBoolean("enabled", true)
+            initEffects(); buildScreen(); applyAll(); power.requestFocus()
+        }
+        override fun onServiceDisconnected(name: ComponentName) {
+            eq = null; bass = null; virtualizer = null
+            initEffects(); buildScreen()
+        }
+    }
+
     private fun dp(x: Int) = (x * resources.displayMetrics.density).roundToInt()
     private fun text(s: String, size: Float, color: Int = white): TextView = TextView(this).apply {
         text = s; textSize = size; setTextColor(color); gravity = Gravity.CENTER_VERTICAL
@@ -72,17 +91,19 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         enabled = prefs.getBoolean("enabled", true)
-        initEffects()
         buildScreen()
-        applyAll()
+        val service = Intent(this, AudioService::class.java)
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+            bound = bindService(service, connection, Context.BIND_AUTO_CREATE)
+        } catch (e: RuntimeException) {
+            state.text = "Service audio indisponible : ${e.javaClass.simpleName}"
+        }
     }
 
     private fun initEffects() {
-        eq = runCatching { Equalizer(0, 0) }.getOrNull()
-        bass = runCatching { BassBoost(0, 0) }.getOrNull()
-        virtualizer = runCatching { Virtualizer(0, 0) }.getOrNull()
-        count = eq?.numberOfBands?.toInt() ?: 0
-        eq?.bandLevelRange?.let { bandMin = it[0].toInt(); bandMax = it[1].toInt() }
+        count = runCatching { eq?.numberOfBands?.toInt() ?: 0 }.getOrDefault(0)
+        runCatching { eq?.bandLevelRange?.let { bandMin = it[0].toInt(); bandMax = it[1].toInt() } }
         values.clear()
         for (i in 0 until count) values.add(prefs.getInt("band_$i", 0).coerceIn(bandMin, bandMax))
     }
@@ -103,27 +124,28 @@ class MainActivity : Activity() {
             power.text = if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ"
         }
         power.id = View.generateViewId()
-        state = text("", 12f, muted)
+        power.contentDescription = power.text
+        state = text("", 12f, muted).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         outer.addView(state)
         state.text = if (count == 0) "Égaliseur matériel indisponible : commandes EQ désactivées." else
-            "$count bandes prises en charge par Android • mode global expérimental (session 0) • pas de garantie pour les autres applications"
+            "$count bandes Android • contrôle : ${if (runCatching { eq?.hasControl() == true }.getOrDefault(false)) "acquis" else "indisponible"} • global expérimental, efficacité externe non vérifiée"
         mainScroll = ScrollView(this).apply { isFillViewport = true }
         outer.addView(mainScroll, LinearLayout.LayoutParams(-1, 0, 1f))
         val body = column()
         mainScroll.addView(body)
         val spectrum = SpectrumView(this)
-        body.addView(spectrum, LinearLayout.LayoutParams(-1, dp(100)).apply { bottomMargin = dp(12) })
+        body.addView(spectrum, LinearLayout.LayoutParams(-1, dp(62)).apply { bottomMargin = dp(12) })
         val eqPanel = column().apply { background = background(panel); setPadding(dp(14), dp(10), dp(14), dp(10)) }
         body.addView(eqPanel, LinearLayout.LayoutParams(-1, -2))
         val eqHeader = row()
         eqPanel.addView(eqHeader)
         eqHeader.addView(section("Égaliseur graphique"), LinearLayout.LayoutParams(0, -2, 1f))
         eqHeader.addView(text("$count bandes disponibles", 13f, muted))
-        eqPanel.addView(text("Les fréquences et le gain maximal dépendent du matériel Android.", 12f, muted))
+        eqPanel.addView(text("OK : régler / valider  •  En navigation : ↑ alimentation, ↓ profils  •  Courbe décorative", 12f, muted))
         val horizontal = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true }
-        eqPanel.addView(horizontal, LinearLayout.LayoutParams(-1, dp(275)))
+        eqPanel.addView(horizontal, LinearLayout.LayoutParams(-1, dp(224)))
         eqStrip = row()
-        horizontal.addView(eqStrip)
+        horizontal.addView(eqStrip, android.widget.FrameLayout.LayoutParams(-1, -1))
         renderBands()
         body.addView(text("PRÉRÉGLAGES", 15f, muted))
         presetScroll = HorizontalScrollView(this)
@@ -141,17 +163,17 @@ class MainActivity : Activity() {
         body.addView(text("EFFETS SONORES", 15f, muted))
         val effects = row()
         body.addView(effects)
-        effects.addView(effectPanel("BASSES", "Bass Boost", "bass", 0xff8d6bff.toInt(), bass != null) { v ->
+        effects.addView(effectPanel("BASSES", "Bass Boost", "bass", 0xff8d6bff.toInt(), runCatching { bass?.strengthSupported == true }.getOrDefault(false)) { v ->
             runCatching { bass?.setStrength(v.toShort()) }
         }, LinearLayout.LayoutParams(0, dp(135), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
-        effects.addView(effectPanel("SURROUND", "Spatialisation", "surround", 0xffef48c1.toInt(), virtualizer != null) { v ->
+        effects.addView(effectPanel("SURROUND", "Spatialisation", "surround", 0xffef48c1.toInt(), runCatching { virtualizer?.strengthSupported == true }.getOrDefault(false)) { v ->
             runCatching { virtualizer?.setStrength(v.toShort()) }
         }, LinearLayout.LayoutParams(0, dp(135), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
         val footer = row()
         outer.addView(footer)
         addButton(footer, "↺  Réinitialiser") { applyPreset("Plat"); prefs.edit().putInt("bass", 0).putInt("surround", 0).apply(); buildScreen(); applyAll() }
-        addButton(footer, "✓  Enregistrer") { prefs.edit().putBoolean("enabled", enabled).apply(); Toast.makeText(this, "Réglages enregistrés", Toast.LENGTH_SHORT).show() }
-        footer.addView(text("◀ ▶ bandes • ▲ ▼ naviguer • OK régler/valider • Retour quitter", 12f, muted))
+        addButton(footer, "■  Arrêter le service") { prefs.edit().putBoolean("enabled", false).apply(); stopService(Intent(this, AudioService::class.java)); finish() }
+        footer.addView(text("Sauvegarde automatique • Retour : écran fermé, service maintenu", 12f, muted))
     }
 
     private fun renderBands() {
@@ -161,22 +183,27 @@ class MainActivity : Activity() {
             return
         }
         for (i in 0 until count) {
-            val freq = eq?.getCenterFreq(i.toShort())?.div(1000) ?: 0
+            val freq = runCatching { eq?.getCenterFreq(i.toShort())?.div(1000) ?: 0 }.getOrDefault(0)
             val caption = if (freq >= 1000) String.format(Locale.US, "%.1fk", freq / 1000f) else "$freq"
             val band = i
             val view = BandSlider(this, caption, values[i], bandMin, bandMax, palette[i * palette.size / count]) { new ->
                 values[band] = new
                 prefs.edit().putInt("band_$band", new).apply()
                 activePreset = "Personnalisé"
+                prefs.edit().putString("preset", activePreset).apply()
                 if (enabled) runCatching { eq?.setBandLevel(band.toShort(), new.toShort()) }
             }
             view.id = View.generateViewId()
-            eqStrip.addView(view, LinearLayout.LayoutParams(dp(67), dp(265)))
+            view.nextFocusUpId = power.id
+            if (::presetBox.isInitialized && presetBox.childCount > 0)
+                view.nextFocusDownId = presetBox.getChildAt(0).id
+            eqStrip.addView(view, LinearLayout.LayoutParams(0, dp(214), 1f))
         }
     }
 
     private fun applyPreset(name: String) {
         activePreset = name
+        prefs.edit().putString("preset", name).apply()
         val gains = when (name) {
             "Basses +" -> intArrayOf(700, 650, 500, 300, 100, 0, 0, 0, 0, 0)
             "Aigus +" -> intArrayOf(0, 0, 0, 0, 0, 0, 100, 350, 550, 650)
@@ -189,8 +216,8 @@ class MainActivity : Activity() {
             else -> IntArray(10)
         }
         for (i in 0 until count) {
-            val index = if (count == 1) 0 else (i * 9f / (count - 1)).roundToInt()
-            val value = gains[index].coerceIn(bandMin, bandMax)
+            val frequency = runCatching { eq?.getCenterFreq(i.toShort())?.div(1000f) ?: 1000f }.getOrDefault(1000f)
+            val value = EqMath.gainAt(frequency, gains).coerceIn(bandMin, bandMax)
             values[i] = value
             prefs.edit().putInt("band_$i", value).apply()
         }
@@ -227,8 +254,8 @@ class MainActivity : Activity() {
 
     private fun applyEnabled() {
         runCatching { eq?.enabled = enabled }
-        runCatching { bass?.enabled = enabled }
-        runCatching { virtualizer?.enabled = enabled }
+        runCatching { bass?.enabled = enabled && prefs.getInt("bass", 0) > 0 && bass?.strengthSupported == true }
+        runCatching { virtualizer?.enabled = enabled && prefs.getInt("surround", 0) > 0 && virtualizer?.strengthSupported == true }
     }
     private fun applyAll() {
         for (i in 0 until count) runCatching { eq?.setBandLevel(i.toShort(), values[i].toShort()) }
@@ -237,7 +264,7 @@ class MainActivity : Activity() {
         applyEnabled()
     }
     override fun onDestroy() {
-        eq?.release(); bass?.release(); virtualizer?.release()
+        if (bound) { unbindService(connection); bound = false }
         super.onDestroy()
     }
 
@@ -262,14 +289,16 @@ class MainActivity : Activity() {
     private inner class BandSlider(context: Context, private val caption: String, private var level: Int,
         private val min: Int, private val max: Int, private val color: Int, private val changed: (Int) -> Unit) : View(context) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        private var editing = false
+        private val navigation = BandNavigation()
+        private val editing get() = navigation.editing
+        private var consumeBackUp = false
         init {
             isFocusable = true
             isClickable = true
             contentDescription = "Fréquence $caption. OK pour régler."
         }
         private fun setEditing(value: Boolean) {
-            editing = value
+            if (value != navigation.editing) navigation.confirm()
             contentDescription = "Fréquence $caption. " +
                 if (editing) "Réglage actif, haut et bas pour modifier, OK pour valider."
                 else "Navigation, haut pour EQ activé, bas pour préréglages, OK pour régler."
@@ -283,11 +312,10 @@ class MainActivity : Activity() {
         override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                    if (event.repeatCount == 0) performClick()
-                    return true
+                    return true // Toggle on key UP only: long presses must not toggle twice.
                 }
                 KeyEvent.KEYCODE_BACK -> {
-                    if (editing) { setEditing(false); return true }
+                    if (editing) { consumeBackUp = true; setEditing(false); return true }
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     if (!editing) {
@@ -295,7 +323,7 @@ class MainActivity : Activity() {
                         power.requestFocus()
                         return true
                     }
-                    level = (level + 100).coerceIn(min, max)
+                    level = EqMath.step(level, 100, min, max)
                     changed(level); invalidate(); return true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
@@ -304,7 +332,7 @@ class MainActivity : Activity() {
                         presetBox.getChildAt(0)?.requestFocus()
                         return true
                     }
-                    level = (level - 100).coerceIn(min, max)
+                    level = EqMath.step(level, -100, min, max)
                     changed(level); invalidate(); return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
@@ -313,6 +341,14 @@ class MainActivity : Activity() {
                 }
             }
             return super.onKeyDown(keyCode, event)
+        }
+        override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+            if (keyCode in listOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                if (!event.isCanceled) performClick()
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_BACK && consumeBackUp) { consumeBackUp = false; return true }
+            return super.onKeyUp(keyCode, event)
         }
         override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
             if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
@@ -338,7 +374,8 @@ class MainActivity : Activity() {
             p.textAlign = Paint.Align.CENTER
             p.textSize = dp(13).toFloat()
             p.color = white
-            canvas.drawText(String.format(Locale.US, "%+.0f", level / 100f), mid, dp(27).toFloat(), p)\n            if (editing) { p.color = 0xff37ed6f.toInt(); p.textSize = dp(10).toFloat(); canvas.drawText("RÉGLAGE", mid, dp(43).toFloat(), p) }
+            canvas.drawText(String.format(Locale.US, "%+.0f", level / 100f), mid, dp(27).toFloat(), p)
+            if (editing) { p.color = 0xff37ed6f.toInt(); p.textSize = dp(10).toFloat(); canvas.drawText("RÉGLAGE", mid, dp(43).toFloat(), p) }
             p.color = 0xff34435a.toInt(); p.strokeWidth = dp(9).toFloat(); p.strokeCap = Paint.Cap.ROUND
             canvas.drawLine(mid, top, mid, bottom, p)
             p.color = color
@@ -350,7 +387,8 @@ class MainActivity : Activity() {
             canvas.drawText(caption, mid, height - dp(19).toFloat(), p)
         }
         override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
-            if (!gainFocus) setEditing(false)\n            super.onFocusChanged(gainFocus, direction, previouslyFocusedRect); invalidate()
+            if (!gainFocus) setEditing(false)
+            super.onFocusChanged(gainFocus, direction, previouslyFocusedRect); invalidate()
         }
     }
 }

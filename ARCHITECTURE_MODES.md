@@ -15,3 +15,7 @@ Deux APK distincts ne peuvent pas simplement partager un AudioSessionId ou modif
 3. Vérifier les interactions télécommande et la persistance des réglages.
 4. Ajouter un mécanisme explicite et sécurisé de synchronisation avec octoStream si nécessaire.
 5. Créer un dépôt indépendant et un pipeline APK signé après validation.
+
+
+## Mise à jour 0.2.0
+Le service `AudioService` possède désormais les effets de session 0 et reste démarré après destruction de l'Activity. Notification persistante et arrêt explicite ; le cycle de vie du service ne supprime pas les restrictions du routage audio Android. Aucun enregistrement/capture audio, aucune intégration octoStream, aucune garantie globale. Voir README pour la validation et la signature des APK CI.

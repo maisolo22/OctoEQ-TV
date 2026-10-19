@@ -1,20 +1,37 @@
-# OctoEQ TV — prototype autonome
+# OctoEQ TV 0.2.0
 
-Égaliseur et virtualisation sonore pour Android TV. Application indépendante de **octoStream**.
+Studio audio indépendant pour Android TV (Android 7.0/API 24 minimum). Interface sombre, curseurs colorés répartis horizontalement, profils, basses et spatialisation virtuelle. Le graphique supérieur est décoratif, pas une mesure du son.
 
-## Statut
-Prototype **non testé sur matériel**. Les effets globaux Android utilisent la session audio 0, dont l'usage est **déprécié** : certaines TV n'appliqueront aucun effet. Ne pas présenter ce prototype comme un égaliseur garanti pour Netflix, YouTube, etc.
+## Télécommande
+- OK entre dans le réglage de la bande ; OK à nouveau valide et revient à la navigation.
+- En réglage : haut/bas modifie le gain de 1 dB, dans les limites du matériel.
+- En navigation : haut revient au bouton EQ, bas aux profils, gauche/droite change de bande.
+- Retour quitte d'abord le réglage ; un autre Retour ferme l'écran en conservant le service.
+- Les préréglages recréent les bandes avec leurs sorties de focus. Les gains sont interpolés sur les fréquences réelles du matériel.
 
-## Fonctionnalités
-- Égaliseur : nombre de bandes détecté sur l'appareil et ajustements au D-pad
-- Bass Boost si disponible
-- Surround virtuel si disponible (ce n'est pas du 5.1 réel)
-- Sauvegarde locale et bouton de réinitialisation
-- Affichage Android TV
+## Audio et sauvegarde
+Les réglages sont enregistrés automatiquement dans SharedPreferences et restaurés à l'ouverture ainsi qu'à la recréation du service. Le bouton EQ suspend les effets sans effacer les réglages. Réinitialiser remet bandes, basses et surround à zéro. Les commandes d'intensité sont désactivées si le matériel ne les prend pas en charge.
 
-## Compiler
-Ouvrir la racine du dépôt dans Android Studio (JDK 17, SDK Android 35), synchroniser Gradle puis lancer `assembleDebug`. APK : `app/build/outputs/apk/debug/app-debug.apk`.
+Un service de premier plan `specialUse`, démarré lorsque l'utilisateur ouvre l'application, conserve les effets après fermeture de l'écran. Une notification permet de revenir à l'application ou d'arrêter le service. Le bouton « Arrêter le service » désactive les effets et ferme l'écran. Aucun démarrage automatique au boot ; après arrêt forcé, il faut rouvrir l'application. Android ou le fabricant peut interrompre le service. Une éventuelle publication Play Store exige la déclaration et l'examen de ce cas `specialUse`.
 
-Pour une application audio qui fonctionne *réellement* avec octoStream : **réutiliser son processeur PCM existant** : `tv/src/main/java/com/example/tv/audio/StudioAudioProcessor.kt`. Une application tierce ne peut pas se brancher librement au flux audio des autres applications.
+## Limites vérifiables
+- Session audio 0 **dépréciée**, global **expérimental** : aucune garantie pour YouTube, Netflix, Kodi ou toutes les applications.
+- Le nombre de bandes, les fréquences et la plage de gain viennent du moteur Android. L'application ne fabrique pas de bandes supplémentaires.
+- BassBoost et Virtualizer dépendent du moteur, de la sortie et du contrôle accordé par Android. Spatialisation virtuelle, pas du 5.1 réel ; Virtualizer est déprécié depuis API 35.
+- Le passthrough HDMI/bitstream peut contourner les effets ; essayer une sortie PCM. Un contrôle acquis ne prouve pas que le son externe est traité.
+- Aucun accès arbitraire au PCM des autres applications. Une intégration DSP dans le lecteur, ou une solution privilégiée système/root, est nécessaire pour un contrôle plus fiable. Aucun lien octoStream n'est implémenté.
+- Pas de limiteur ni de préampli PCM dans ce mode : les forts boosts cumulés peuvent saturer. Réduire les gains en cas de distorsion.
 
-Documentation : https://developer.android.com/reference/android/media/audiofx/AudioEffect
+## APK et validation
+L'onglet Actions exécute tests JVM/Robolectric, lint, compilation, vérification de signature APK et inspection du manifeste TV/service. Chaque push main réussi publie une préversion avec APK et SHA256SUMS. APK **de test signé debug** ; la clé CI peut changer entre runners, impliquant une désinstallation (et perte des préférences) avant mise à jour. Une clé de signature durable reste nécessaire pour une distribution stable.
+
+Compilation locale : JDK 17, SDK 35, Gradle 8.11.1 ; `gradle testDebugUnitTest lintDebug assembleDebug`. Aucun wrapper Gradle n'est encore livré.
+
+Les tests automatisés ne remplacent pas les essais réels : télécommande, HDMI PCM/passthrough, Bluetooth, haut-parleurs, deux applications audio concurrentes, fermeture/réouverture, arrêt du service et redémarrage TV. La compatibilité sonore globale sur matériel n'est pas certifiée.
+
+## Sources Android
+- [Equalizer et session 0](https://developer.android.com/reference/android/media/audiofx/Equalizer)
+- [AudioEffect et contrôle des sessions](https://developer.android.com/reference/android/media/audiofx/AudioEffect)
+- [Virtualizer](https://developer.android.com/reference/android/media/audiofx/Virtualizer)
+- [Services de premier plan specialUse](https://developer.android.com/develop/background-work/services/fgs/service-types#special-use)
+- [Applications TV](https://developer.android.com/training/tv/start/start)
