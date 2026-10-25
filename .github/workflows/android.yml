@@ -21,7 +21,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Tests, lint and APK
-        run: gradle --no-daemon testDebugUnitTest lintDebug assembleDebug
+        run: bash gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
       - name: Verify APK signature and manifest
         run: |
           SDK_TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
@@ -31,21 +31,23 @@ jobs:
           grep -q LEANBACK_LAUNCHER app/build/outputs/apk/debug/manifest.xml
           grep -q FOREGROUND_SERVICE_SPECIAL_USE app/build/outputs/apk/debug/manifest.xml
           cd app/build/outputs/apk/debug
-          mv app-debug.apk OctoEQ-TV-0.2.0.apk
-          sha256sum OctoEQ-TV-0.2.0.apk > SHA256SUMS
+          mv app-debug.apk OctoEQ-TV-0.3.0.apk
+          sha256sum OctoEQ-TV-0.3.0.apk > SHA256SUMS
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OctoEQ-TV-0.2.0
+          name: OctoEQ-TV-0.3.0
           path: |
-            app/build/outputs/apk/debug/OctoEQ-TV-0.2.0.apk
+            app/build/outputs/apk/debug/OctoEQ-TV-0.3.0.apk
             app/build/outputs/apk/debug/SHA256SUMS
+          retention-days: 3
           if-no-files-found: error
       - name: Upload verification reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verification-reports
+          retention-days: 3
           path: app/build/reports/
   publish:
     needs: build
@@ -56,12 +58,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: OctoEQ-TV-0.2.0
+          name: OctoEQ-TV-0.3.0
           path: apk
       - name: Publish downloadable test APK
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          TAG="preview-0.2.0-${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" apk/* --target "$GITHUB_SHA" --prerelease --title "OctoEQ TV 0.2.0 • build ${GITHUB_RUN_NUMBER}" --notes "APK de test signé debug. Navigation OK régler/valider, profils interpolés et service audio persistant. Effets globaux expérimentaux : validation sur TV réelle requise. Signature debug CI non stable entre runners : une désinstallation peut être nécessaire pour remplacer un ancien APK."
+          TAG="preview-0.3.0-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" apk/* --target "$GITHUB_SHA" --prerelease --title "OctoEQ TV 0.3.0 • build ${GITHUB_RUN_NUMBER}" --notes "APK de test signé debug. Navigation OK régler/valider, profils interpolés et service audio persistant. Effets globaux expérimentaux : validation sur TV réelle requise. Signature debug CI non stable entre runners : une désinstallation peut être nécessaire pour remplacer un ancien APK."
+
