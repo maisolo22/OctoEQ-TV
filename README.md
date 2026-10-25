@@ -1,37 +1,55 @@
-# OctoEQ TV 0.2.0
+# OctoEQ TV 0.3.0 — Studio et sessions Android
 
-Studio audio indépendant pour Android TV (Android 7.0/API 24 minimum). Interface sombre, curseurs colorés répartis horizontalement, profils, basses et spatialisation virtuelle. Le graphique supérieur est décoratif, pas une mesure du son.
+Égaliseur indépendant pour Android TV, Android 7/API 24 minimum. Interface compacte sombre, dix contrôles de tonalité, courbe des gains demandés, préréglages, comparaison temporaire et diagnostic de compatibilité. Le graphique n’est pas un analyseur du son externe.
 
-## Télécommande
-- OK entre dans le réglage de la bande ; OK à nouveau valide et revient à la navigation.
-- En réglage : haut/bas modifie le gain de 1 dB, dans les limites du matériel.
-- En navigation : haut revient au bouton EQ, bas aux profils, gauche/droite change de bande.
-- Retour quitte d'abord le réglage ; un autre Retour ferme l'écran en conservant le service.
-- Les préréglages recréent les bandes avec leurs sorties de focus. Les gains sont interpolés sur les fréquences réelles du matériel.
+[Installation et tests Android Studio](ANDROID_STUDIO.md).
 
-## Audio et sauvegarde
-Les réglages sont enregistrés automatiquement dans SharedPreferences et restaurés à l'ouverture ainsi qu'à la recréation du service. Le bouton EQ suspend les effets sans effacer les réglages. Réinitialiser remet bandes, basses et surround à zéro. Les commandes d'intensité sont désactivées si le matériel ne les prend pas en charge.
+## Pourquoi le son diffère d’octoStream
 
-Un service de premier plan `specialUse`, démarré lorsque l'utilisateur ouvre l'application, conserve les effets après fermeture de l'écran. Une notification permet de revenir à l'application ou d'arrêter le service. Le bouton « Arrêter le service » désactive les effets et ferme l'écran. Aucun démarrage automatique au boot ; après arrêt forcé, il faut rouvrir l'application. Android ou le fabricant peut interrompre le service. Une éventuelle publication Play Store exige la déclaration et l'examen de ce cas `specialUse`.
+octoStream reçoit son propre PCM et lui applique dix filtres RBJ, préampli, largeur stéréo M/S, balance et limiteur. OctoEQ ne reçoit pas le PCM de Spotify, Nuvio ou Stremio. Il demande aux moteurs Android de traiter les sessions audio accessibles. Les algorithmes, fréquences, nombre de bandes et sorties pris en charge peuvent être différents. Des courbes proches ne garantissent pas le même rendu.
 
-## Limites vérifiables
-- Session audio 0 **dépréciée**, global **expérimental** : aucune garantie pour YouTube, Netflix, Kodi ou toutes les applications.
-- Le nombre de bandes, les fréquences et la plage de gain viennent du moteur Android. L'application ne fabrique pas de bandes supplémentaires.
-- BassBoost et Virtualizer dépendent du moteur, de la sortie et du contrôle accordé par Android. Spatialisation virtuelle, pas du 5.1 réel ; Virtualizer est déprécié depuis API 35.
-- Le passthrough HDMI/bitstream peut contourner les effets ; essayer une sortie PCM. Un contrôle acquis ne prouve pas que le son externe est traité.
-- Aucun accès arbitraire au PCM des autres applications. Une intégration DSP dans le lecteur, ou une solution privilégiée système/root, est nécessaire pour un contrôle plus fiable. Aucun lien octoStream n'est implémenté.
-- Pas de limiteur ni de préampli PCM dans ce mode : les forts boosts cumulés peuvent saturer. Réduire les gains en cas de distorsion.
+## Moteurs et modes réels
 
-## APK et validation
-L'onglet Actions exécute tests JVM/Robolectric, lint, compilation, vérification de signature APK et inspection du manifeste TV/service. Chaque push main réussi publie une préversion avec APK et SHA256SUMS. APK **de test signé debug** ; la clé CI peut changer entre runners, impliquant une désinstallation (et perte des préférences) avant mise à jour. Une clé de signature durable reste nécessaire pour une distribution stable.
+| Mode | Comportement |
+| --- | --- |
+| Automatique | Sessions annoncées par les lecteurs ; sinon sortie globale expérimentale |
+| Sessions uniquement | Attend les annonces Android OPEN_AUDIO_EFFECT_CONTROL_SESSION ou le panneau d’effets ouvert par un lecteur |
+| Global expérimental | Session 0 dépréciée : dépend entièrement de la box et de sa sortie |
 
-Compilation locale : JDK 17, SDK 35, Gradle 8.11.1 ; `gradle testDebugUnitTest lintDebug assembleDebug`. Aucun wrapper Gradle n'est encore livré.
+Les sessions et le global ne sont jamais attachés simultanément. Fermeture annoncée : libération des effets correspondants. Huit sessions maximum. Pas de scan arbitraire des identifiants, pas de capture audio. Après un redémarrage du service, relancer la lecture externe pour renouveler les annonces.
 
-Les tests automatisés ne remplacent pas les essais réels : télécommande, HDMI PCM/passthrough, Bluetooth, haut-parleurs, deux applications audio concurrentes, fermeture/réouverture, arrêt du service et redémarrage TV. La compatibilité sonore globale sur matériel n'est pas certifiée.
+Sur session non nulle et Android 9/API 28+, tentative DynamicsProcessing avec dix bandes, préampli et limiteur liés aux canaux. Repli Equalizer Android en cas d’indisponibilité. Dans ce repli, les dix contrôles sont interpolés sur les bandes réellement exposées par le matériel : ce ne sont pas dix bandes natives indépendantes. Préampli approché par atténuation commune des bandes, sans limiteur PCM. Le diagnostic donne le moteur réel et son contrôle, pas une certification du chemin audio.
 
-## Sources Android
-- [Equalizer et session 0](https://developer.android.com/reference/android/media/audiofx/Equalizer)
-- [AudioEffect et contrôle des sessions](https://developer.android.com/reference/android/media/audiofx/AudioEffect)
-- [Virtualizer](https://developer.android.com/reference/android/media/audiofx/Virtualizer)
-- [Services de premier plan specialUse](https://developer.android.com/develop/background-work/services/fgs/service-types#special-use)
-- [Applications TV](https://developer.android.com/training/tv/start/start)
+Préréglages plus modérés inspirés des courbes d’octoStream ; chaque préréglage remet BassBoost/Virtualizer à zéro pour éviter de les cumuler involontairement. Protection automatique : réserve de gain égale au plus grand boost demandé, ou préampli manuel plus faible. Elle ne garantit pas l’absence de saturation dans une chaîne OEM, notamment avec BassBoost ajouté après le DSP.
+
+BassBoost et Virtualizer dépendent du matériel et des droits de contrôle. Virtualizer est déprécié depuis API 35 et ne reproduit ni la largeur M/S, ni la balance d’octoStream, ni un surround multicanal. Aucun réglage factice de largeur n’est ajouté.
+
+## Interface et télécommande
+
+OK entre dans le réglage d’une bande ; OK valide. Haut/bas modifie le gain en réglage, sinon rejoint alimentation/préréglages. Gauche/droite quitte le réglage et change de bande. Retour quitte d’abord le réglage. Gain sauvegardé automatiquement. La courbe montre les gains demandés, pas une mesure acoustique.
+
+Applications / sortie choisit le mode ou ouvre le diagnostic. Rebrancher les effets retente la connexion aux sessions connues. Ouvrir une application liste les applications TV installées. Comparer avec l’original désactive temporairement les effets détenus par OctoEQ ; la comparaison se termine quand l’écran est quitté. Le service garde les réglages pendant l’écoute externe.
+
+Réglages enregistrés dans SharedPreferences ; anciens band_N migrés vers les gains de référence lorsque les fréquences matérielles sont accessibles. Service spécial premier plan démarré par l’utilisateur ; pas de démarrage au boot. Android ou le fabricant peut l’arrêter. Le bouton Arrêter libère les effets après fermeture de l’écran.
+
+## Compatibilité Spotify / Nuvio / Stremio
+
+Ouvrir OctoEQ avant la lecture, commencer en Auto puis relancer la piste externe. Vérifier le diagnostic. Les applications qui n’annoncent pas de session ne peuvent pas être prises en charge de manière fiable. Pour les vidéos, essayer PCM et passthrough désactivé ; HDMI bitstream et certains chemins matériels/DRM peuvent contourner les effets. Tester chaque application et chaque sortie séparément. Aucun résultat sur box réelle n’est certifié par les tests logiciels.
+
+## Compilation
+
+JDK 17 minimum, SDK 35, Gradle wrapper 8.11.1. Windows :
+
+```powershell
+.\gradlew.bat testDebugUnitTest lintDebug :app:assembleDebug -PoctoPreview=true
+```
+
+macOS/Linux : bash gradlew testDebugUnitTest lintDebug :app:assembleDebug -PoctoPreview=true.
+L’option preview crée OctoEQ TV Test à côté de l’app normale. La signature debug locale reste stable sur votre poste ; les APK CI signés avec une clé éphémère ne garantissent pas les mises à jour entre runners. Une signature Release durable est nécessaire avant distribution stable.
+
+## Sources
+
+- https://developer.android.com/reference/android/media/audiofx/AudioEffect
+- https://developer.android.com/reference/android/media/audiofx/DynamicsProcessing
+- https://developer.android.com/reference/android/media/audiofx/Virtualizer
+- https://developer.android.com/develop/background-work/services/fgs/service-types#special-use

@@ -23,12 +23,12 @@ import kotlin.math.roundToInt
  */
 @Suppress("DEPRECATION")
 class MainActivity : Activity() {
-    private val bg = Color.rgb(7, 13, 27)
-    private val panel = Color.rgb(14, 27, 47)
-    private val cyan = Color.rgb(29, 171, 255)
+    private val bg = Color.rgb(9, 10, 16)
+    private val panel = Color.rgb(20, 20, 31)
+    private val cyan = Color.rgb(185, 161, 255)
     private val white = Color.WHITE
     private val muted = Color.rgb(168, 190, 218)
-    private val palette = intArrayOf(0xff37ed6f.toInt(), 0xff12ddc9.toInt(), 0xff16b6ff.toInt(), 0xff8e65ff.toInt(), 0xffef48c1.toInt(), 0xffffa827.toInt())
+    private val palette = intArrayOf(0xffb9a1ff.toInt(), 0xffa9c9ef.toInt(), 0xffa1d9c5.toInt())
     private val prefs by lazy { getSharedPreferences("studio", MODE_PRIVATE) }
     private var eq: Equalizer? = null
     private var bass: BassBoost? = null
@@ -44,17 +44,37 @@ class MainActivity : Activity() {
     private lateinit var presetBox: LinearLayout
     private lateinit var mainScroll: ScrollView
     private lateinit var presetScroll: HorizontalScrollView
+    private var curve: SpectrumView? = null
     private var activePreset = "Personnalisé"
 
+    private var engine: AudioService? = null
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var capabilities = ""
+    private val monitor = object : Runnable {
+        override fun run() {
+            val active = engine
+            val next = "${active?.primary?.engineName}/${active?.primary?.controlled}/${active?.primary?.bassSupported}/${active?.primary?.spatialSupported}"
+            if (next != capabilities) {
+                capabilities = next
+                initEffects(); buildScreen(); power.requestFocus()
+            }
+            enabled = prefs.getBoolean("enabled", true)
+            power.text = if (enabled) "● EQ ACTIVÉ" else "○ EQ DÉSACTIVÉ"
+            state.text = active?.diagnostic ?: "Service non connecté"
+            uiHandler.postDelayed(this, 1000)
+        }
+    }
     private var bound = false
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            val engine = (binder as AudioService.LocalBinder).service
-            eq = engine.eq; bass = engine.bass; virtualizer = engine.virtualizer
+            engine = (binder as AudioService.LocalBinder).service
+            eq = engine?.eq; bass = engine?.bass; virtualizer = engine?.virtualizer
+            attachIntentSession(intent)
             enabled = prefs.getBoolean("enabled", true)
             initEffects(); buildScreen(); applyAll(); power.requestFocus()
         }
         override fun onServiceDisconnected(name: ComponentName) {
+            engine = null
             eq = null; bass = null; virtualizer = null
             initEffects(); buildScreen()
         }
@@ -71,13 +91,13 @@ class MainActivity : Activity() {
     private fun background(color: Int, radius: Int = 16): android.graphics.drawable.GradientDrawable =
         android.graphics.drawable.GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
     private fun button(s: String, action: () -> Unit): Button = Button(this).apply {
-        text = s; isAllCaps = false; textSize = 14f; setTextColor(white)
-        background = background(0xff173352.toInt(), 11)
+        text = s; isAllCaps = false; textSize = 12f; setTextColor(white)
+        background = background(0xff242135.toInt(), 11)
         isFocusable = true
         setPadding(dp(12), dp(8), dp(12), dp(8))
         setOnClickListener { action() }
         setOnFocusChangeListener { _, focused ->
-            background = background(if (focused) 0xff176ac0.toInt() else 0xff173352.toInt(), 11)
+            background = background(if (focused) 0xff514073.toInt() else 0xff242135.toInt(), 11)
             scaleX = if (focused) 1.04f else 1f
             scaleY = if (focused) 1.04f else 1f
         }
@@ -92,6 +112,7 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         enabled = prefs.getBoolean("enabled", true)
         buildScreen()
+        initEffects()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED && !prefs.getBoolean("notification_asked", false)) {
             prefs.edit().putBoolean("notification_asked", true).apply()
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -105,11 +126,19 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun attachIntentSession(source: Intent?) {
+        if (source?.action != android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL) return
+        val session = source.getIntExtra(android.media.audiofx.AudioEffect.EXTRA_AUDIO_SESSION, -1)
+        val owner = source.getStringExtra(android.media.audiofx.AudioEffect.EXTRA_PACKAGE_NAME)
+            ?: callingPackage ?: "Lecteur externe"
+        engine?.announce(session, owner)
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent); setIntent(intent); attachIntentSession(intent)
+    }
     private fun initEffects() {
-        count = runCatching { eq?.numberOfBands?.toInt() ?: 0 }.getOrDefault(0)
-        runCatching { eq?.bandLevelRange?.let { bandMin = it[0].toInt(); bandMax = it[1].toInt() } }
-        values.clear()
-        for (i in 0 until count) values.add(prefs.getInt("band_$i", 0).coerceIn(bandMin, bandMax))
+        count = 10; bandMin = -1200; bandMax = 1200
+        values.clear(); values.addAll(StudioTone.gains(prefs).toList())
     }
 
     private fun buildScreen() {
@@ -119,7 +148,7 @@ class MainActivity : Activity() {
         outer.addView(header)
         val brand = column()
         brand.addView(text("◉  OctoEQ TV", 26f, cyan).apply { setTypeface(null, Typeface.BOLD) })
-        brand.addView(text("POWER YOUR SOUND", 11f, muted))
+        brand.addView(text("STUDIO AUDIO · SESSIONS ET COMPATIBILITÉ TV", 10f, muted))
         header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
         power = addButton(header, if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ") {
             enabled = !enabled
@@ -132,23 +161,31 @@ class MainActivity : Activity() {
         power.contentDescription = power.text
         state = text("", 12f, muted).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         outer.addView(state)
-        state.text = if (count == 0) "Égaliseur matériel indisponible : commandes EQ désactivées." else
-            "$count bandes Android • contrôle : ${if (runCatching { eq?.hasControl() == true }.getOrDefault(false)) "acquis" else "indisponible"} • global expérimental, efficacité externe non vérifiée"
+        state.text = engine?.diagnostic ?: "Connexion au moteur audio…"
+        val toolbar = HorizontalScrollView(this)
+        val tools = row(); toolbar.addView(tools); outer.addView(toolbar)
+        addButton(tools, "Applications / sortie") { showCompatibility() }
+        addButton(tools, "Comparer avec l’original") {
+            engine?.toggleBypass()
+            state.text = engine?.diagnostic.orEmpty()
+        }
+        addButton(tools, "Rebrancher les effets") { engine?.retry(); initEffects(); buildScreen(); power.requestFocus() }
+        addButton(tools, "Ouvrir une application") { openPlayer() }
         mainScroll = ScrollView(this).apply { isFillViewport = true }
         outer.addView(mainScroll, LinearLayout.LayoutParams(-1, 0, 1f))
         val body = column()
         mainScroll.addView(body)
-        val spectrum = SpectrumView(this)
+        val spectrum = SpectrumView(this).also { curve = it }
         body.addView(spectrum, LinearLayout.LayoutParams(-1, dp(62)).apply { bottomMargin = dp(12) })
         val eqPanel = column().apply { background = background(panel); setPadding(dp(14), dp(10), dp(14), dp(10)) }
         body.addView(eqPanel, LinearLayout.LayoutParams(-1, -2))
         val eqHeader = row()
         eqPanel.addView(eqHeader)
         eqHeader.addView(section("Égaliseur graphique"), LinearLayout.LayoutParams(0, -2, 1f))
-        eqHeader.addView(text("$count bandes disponibles", 13f, muted))
-        eqPanel.addView(text("OK : régler / valider  •  En navigation : ↑ alimentation, ↓ profils  •  Courbe décorative", 12f, muted))
+        eqHeader.addView(text("10 réglages · ${engine?.primary?.bands ?: 0} bandes moteur", 13f, muted))
+        eqPanel.addView(text("OK : régler / valider  •  En navigation : ↑ alimentation, ↓ profils  •  Courbe des gains demandés", 12f, muted))
         val horizontal = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true; isFillViewport = true }
-        eqPanel.addView(horizontal, LinearLayout.LayoutParams(-1, dp(224)))
+        eqPanel.addView(horizontal, LinearLayout.LayoutParams(-1, dp(194)))
         eqStrip = row()
         horizontal.addView(eqStrip, android.widget.FrameLayout.LayoutParams(-1, -1))
         renderBands()
@@ -168,16 +205,21 @@ class MainActivity : Activity() {
         body.addView(text("EFFETS SONORES", 15f, muted))
         val effects = row()
         body.addView(effects)
-        effects.addView(effectPanel("BASSES", "Bass Boost", "bass", 0xff8d6bff.toInt(), runCatching { bass?.strengthSupported == true }.getOrDefault(false)) { v ->
-            runCatching { bass?.setStrength(v.toShort()) }
+        effects.addView(effectPanel("BASSES", "Bass Boost", "bass", 0xff8d6bff.toInt(), engine?.primary?.bassSupported == true) { v ->
+            Unit
         }, LinearLayout.LayoutParams(0, dp(135), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
-        effects.addView(effectPanel("SURROUND", "Spatialisation", "surround", 0xffef48c1.toInt(), runCatching { virtualizer?.strengthSupported == true }.getOrDefault(false)) { v ->
-            runCatching { virtualizer?.setStrength(v.toShort()) }
+        effects.addView(effectPanel("ESPACE SONORE", "Virtualizer Android · pas de 5.1", "surround", 0xffef48c1.toInt(), engine?.primary?.spatialSupported == true) { v ->
+            Unit
         }, LinearLayout.LayoutParams(0, dp(135), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        val protection = row()
+        body.addView(protection)
+        addButton(protection, "Préampli / protection") { showProtection() }
+        protection.addView(text("${if (engine?.primary?.advanced == true) "Préampli et limiteur disponibles" else "Repli EQ : atténuation approchée, sans limiteur PCM"}", 11f, muted))
         val footer = row()
-        outer.addView(footer)
-        addButton(footer, "↺  Réinitialiser") { applyPreset("Plat"); prefs.edit().putInt("bass", 0).putInt("surround", 0).apply(); buildScreen(); applyAll() }
-        addButton(footer, "■  Arrêter le service") { prefs.edit().putBoolean("enabled", false).apply(); stopService(Intent(this, AudioService::class.java)); finish() }
+        val footerScroll = HorizontalScrollView(this)
+        footerScroll.addView(footer); outer.addView(footerScroll)
+        addButton(footer, "↺ Réinitialiser") { applyPreset("Plat"); prefs.edit().putInt("bass", 0).putInt("surround", 0).apply(); buildScreen(); applyAll() }
+        addButton(footer, "■ Arrêter") { prefs.edit().putBoolean("enabled", false).apply(); stopService(Intent(this, AudioService::class.java)); finish() }
         footer.addView(text("Sauvegarde automatique • Retour : écran fermé, service maintenu", 12f, muted))
     }
 
@@ -188,46 +230,38 @@ class MainActivity : Activity() {
             return
         }
         for (i in 0 until count) {
-            val freq = runCatching { eq?.getCenterFreq(i.toShort())?.div(1000) ?: 0 }.getOrDefault(0)
+            val freq = StudioTone.frequencies[i].toInt()
             val caption = if (freq >= 1000) String.format(Locale.US, "%.1fk", freq / 1000f) else "$freq"
             val band = i
             val view = BandSlider(this, caption, values[i], bandMin, bandMax, palette[i * palette.size / count]) { new ->
                 values[band] = new
-                prefs.edit().putInt("band_$band", new).apply()
+                curve?.invalidate()
+                prefs.edit().putInt("gain_$band", new).apply()
                 activePreset = "Personnalisé"
                 prefs.edit().putString("preset", activePreset).apply()
-                if (enabled) runCatching { eq?.setBandLevel(band.toShort(), new.toShort()) }
+                engine?.let { state.text = it.diagnostic }
             }
+            view.isEnabled = engine?.primary?.controlled == true
             view.id = View.generateViewId()
             view.nextFocusUpId = power.id
             if (::presetBox.isInitialized && presetBox.childCount > 0)
                 view.nextFocusDownId = presetBox.getChildAt(0).id
-            eqStrip.addView(view, LinearLayout.LayoutParams(0, dp(214), 1f))
+            eqStrip.addView(view, LinearLayout.LayoutParams(0, dp(184), 1f))
         }
     }
 
     private fun applyPreset(name: String) {
         activePreset = name
         prefs.edit().putString("preset", name).apply()
-        val gains = when (name) {
-            "Basses +" -> intArrayOf(700, 650, 500, 300, 100, 0, 0, 0, 0, 0)
-            "Aigus +" -> intArrayOf(0, 0, 0, 0, 0, 0, 100, 350, 550, 650)
-            "Vocal" -> intArrayOf(-200, -100, 0, 100, 250, 450, 450, 250, 0, -100)
-            "Pop" -> intArrayOf(350, 250, 0, -100, 0, 200, 250, 300, 250, 200)
-            "Rock" -> intArrayOf(450, 300, 100, -100, -200, 100, 300, 400, 450, 350)
-            "Jazz" -> intArrayOf(250, 150, 0, 100, 200, 150, 200, 300, 250, 200)
-            "Cinéma" -> intArrayOf(500, 450, 250, 0, 0, 100, 200, 300, 350, 300)
-            "Concert" -> intArrayOf(300, 250, 150, 50, 0, 0, 100, 250, 350, 350)
-            else -> IntArray(10)
-        }
+        val gains = StudioTone.preset(name)
+        val editor = prefs.edit().putInt("bass", 0).putInt("surround", 0)
         for (i in 0 until count) {
-            val frequency = runCatching { eq?.getCenterFreq(i.toShort())?.div(1000f) ?: 1000f }.getOrDefault(1000f)
-            val value = EqMath.gainAt(frequency, gains).coerceIn(bandMin, bandMax)
-            values[i] = value
-            prefs.edit().putInt("band_$i", value).apply()
+            values[i] = gains[i]
+            editor.putInt("gain_$i", gains[i])
         }
+        editor.apply()
         applyAll()
-        renderBands()
+        buildScreen(); power.requestFocus()
         Toast.makeText(this, "Profil : $name", Toast.LENGTH_SHORT).show()
     }
 
@@ -257,18 +291,52 @@ class MainActivity : Activity() {
         return p
     }
 
-    private fun applyEnabled() {
-        runCatching { eq?.enabled = enabled }
-        runCatching { bass?.enabled = enabled && prefs.getInt("bass", 0) > 0 && bass?.strengthSupported == true }
-        runCatching { virtualizer?.enabled = enabled && prefs.getInt("surround", 0) > 0 && virtualizer?.strengthSupported == true }
+    // The service is the only owner of effect parameters. Preference changes are debounced there.
+    private fun applyEnabled() { state.text = engine?.diagnostic.orEmpty() }
+    private fun applyAll() { state.text = engine?.diagnostic.orEmpty() }
+    override fun onResume() {
+        super.onResume(); uiHandler.removeCallbacks(monitor); uiHandler.post(monitor)
     }
-    private fun applyAll() {
-        for (i in 0 until count) runCatching { eq?.setBandLevel(i.toShort(), values[i].toShort()) }
-        runCatching { bass?.setStrength(prefs.getInt("bass", 0).coerceIn(0, 1000).toShort()) }
-        runCatching { virtualizer?.setStrength(prefs.getInt("surround", 0).coerceIn(0, 1000).toShort()) }
-        applyEnabled()
+    override fun onPause() {
+        uiHandler.removeCallbacks(monitor); engine?.endComparison(); super.onPause()
+    }
+    private fun showCompatibility() {
+        val modes = arrayOf("Automatique : sessions annoncées, sinon global expérimental", "Sessions uniquement : applications coopérantes", "Global expérimental : dépend de la box")
+        val keys = arrayOf("auto", "sessions", "global")
+        android.app.AlertDialog.Builder(this).setTitle("Applications / sortie")
+            .setSingleChoiceItems(modes, keys.indexOf(prefs.getString("mode", "auto"))) { dialog, index ->
+                prefs.edit().putString("mode", keys[index]).apply(); dialog.dismiss()
+            }.setPositiveButton("Diagnostic") { _, _ ->
+                android.app.AlertDialog.Builder(this).setTitle("Compatibilité réelle")
+                    .setMessage((engine?.diagnostic ?: "Service déconnecté") +
+                        "\n\nOuvrez OctoEQ avant Spotify, Nuvio ou Stremio, puis relancez la lecture. Seules les sessions annoncées sont accessibles. Si aucune n’apparaît, essayez Global expérimental. Sur la box et dans le lecteur vidéo, essayez PCM / passthrough désactivé.\n\nContrôle acquis ne signifie pas son traité. Comparez à l’écoute. La largeur stéréo DSP d’octoStream ne peut pas être reproduite par Virtualizer. Évitez deux égaliseurs simultanés.")
+                    .setPositiveButton("Fermer", null).show()
+            }.setNegativeButton("Fermer", null).show()
+    }
+    private fun showProtection() {
+        val labels = arrayOf("Préampli 0 dB", "Préampli −3 dB", "Préampli −6 dB", "Préampli −9 dB", "Préampli −12 dB")
+        android.app.AlertDialog.Builder(this).setTitle("Réserve de gain")
+            .setSingleChoiceItems(labels, (-prefs.getInt("preamp", 0) / 300).coerceIn(0,4)) { dialog, index ->
+                prefs.edit().putInt("preamp", -index * 300).apply(); dialog.dismiss()
+            }.setPositiveButton(if (prefs.getBoolean("safe_gain", true)) "Protection auto : ON" else "Protection auto : OFF") { _, _ ->
+                prefs.edit().putBoolean("safe_gain", !prefs.getBoolean("safe_gain", true)).apply()
+            }.setNeutralButton(if (prefs.getBoolean("limiter", true)) "Limiteur : ON" else "Limiteur : OFF") { _, _ ->
+                prefs.edit().putBoolean("limiter", !prefs.getBoolean("limiter", true)).apply()
+            }.setNegativeButton("Fermer", null).show()
+    }
+    private fun openPlayer() {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
+        val apps = packageManager.queryIntentActivities(intent, 0).filter { it.activityInfo.packageName != packageName }
+            .sortedBy { it.loadLabel(packageManager).toString() }
+        android.app.AlertDialog.Builder(this).setTitle("Ouvrir un lecteur TV")
+            .setItems(apps.map { it.loadLabel(packageManager).toString() }.toTypedArray()) { _, index ->
+                val info = apps[index].activityInfo
+                runCatching { startActivity(Intent(Intent.ACTION_MAIN).setClassName(info.packageName, info.name)) }
+                    .onFailure { Toast.makeText(this, "Impossible d’ouvrir cette application", Toast.LENGTH_SHORT).show() }
+            }.setNegativeButton("Fermer", null).show()
     }
     override fun onDestroy() {
+        uiHandler.removeCallbacksAndMessages(null)
         if (bound) { unbindService(connection); bound = false }
         super.onDestroy()
     }
@@ -278,16 +346,19 @@ class MainActivity : Activity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             canvas.drawColor(panel)
-            val bars = 62
-            for (i in 0 until bars) {
-                val x = width * (i + 0.5f) / bars
-                val fraction = (0.15 + 0.65 * kotlin.math.abs(kotlin.math.sin(i * 0.23) * kotlin.math.cos(i * 0.13))).toFloat()
-                val h = height * fraction
-                paint.color = palette[i * palette.size / bars]
-                paint.strokeWidth = (width.toFloat() / bars * 0.56f).coerceAtLeast(2f)
-                paint.strokeCap = Paint.Cap.ROUND
-                canvas.drawLine(x, height * 0.86f, x, height * 0.86f - h * 0.74f, paint)
+            val gains = StudioTone.gains(prefs)
+            val step = width.toFloat() / 11
+            val mid = height / 2f
+            paint.color = 0xff393344.toInt(); paint.strokeWidth = dp(1).toFloat()
+            canvas.drawLine(step, mid, width - step, mid, paint)
+            paint.color = cyan; paint.strokeWidth = dp(2).toFloat()
+            for (i in 0 until 9) {
+                canvas.drawLine(step * (i + 1), mid - gains[i] / 1200f * mid * .8f,
+                    step * (i + 2), mid - gains[i + 1] / 1200f * mid * .8f, paint)
             }
+            paint.textSize = dp(10).toFloat(); paint.color = muted
+            canvas.drawText("Courbe demandée · aucune mesure du signal externe", dp(10).toFloat(), height - dp(5).toFloat(), paint)
+
         }
     }
 
@@ -315,6 +386,7 @@ class MainActivity : Activity() {
             return true
         }
         override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+            if (!isEnabled) return super.onKeyDown(keyCode, event)
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                     return true // Toggle on key UP only: long presses must not toggle twice.
@@ -356,6 +428,7 @@ class MainActivity : Activity() {
             return super.onKeyUp(keyCode, event)
         }
         override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+            if (!isEnabled) return false
             if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
                 requestFocus()
                 val top = dp(50).toFloat()
@@ -397,3 +470,4 @@ class MainActivity : Activity() {
         }
     }
 }
+
