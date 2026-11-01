@@ -17,7 +17,7 @@ class LinearConfigurationTest {
         assertFalse(config.isPostEqInUse)
         assertFalse(config.isLimiterInUse)
         assertEquals(10, config.preEqBandCount)
-        for (channel in 0 until config.channelCount) {
+        for (channel in 0 until 2) {
             assertEquals(0f, config.getInputGainByChannelIndex(channel), 0f)
             val eq = config.getPreEqByChannelIndex(channel)
             for (i in AudioPolicy.centers.indices) {

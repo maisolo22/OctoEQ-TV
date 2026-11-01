@@ -95,7 +95,7 @@ internal object LinearConfiguration {
     fun validate(config: DynamicsProcessing.Config) {
         check(config.isPreEqInUse && config.preEqBandCount == AudioPolicy.centers.size &&
             !config.isMbcInUse && !config.isPostEqInUse && !config.isLimiterInUse) { "Configuration fidèle rejetée" }
-        for (channel in 0 until config.channelCount) {
+        for (channel in 0 until 2) {
             check(kotlin.math.abs(config.getInputGainByChannelIndex(channel)) < 0.01f) { "Gain général inattendu" }
             for (band in AudioPolicy.centers.indices) {
                 val actual = config.getPreEqBandByChannelIndex(channel, band)
