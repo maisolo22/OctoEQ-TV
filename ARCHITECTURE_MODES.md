@@ -1,21 +1,21 @@
-# OctoEQ TV — mode C (hybride)
+# OctoEQ TV 0.3 — moteur fidèle et portée audio
 
-## Mode 1 — Global expérimental
-Le prototype autonome utilise les effets Android Equalizer/BassBoost/Virtualizer sur la session 0. Cette session est dépréciée et peut ne produire aucun effet sur certaines TV ou applications. Ne pas promettre d'agir sur Netflix/YouTube/Kodi. Les flux audio HDMI passthrough ne sont généralement pas modifiables par ces effets.
+## Propriété des effets
+`AudioService` est l'unique propriétaire et auteur des réglages natifs. `MainActivity` lit les capacités et écrit les préférences. Une mise à jour est coalescée sur 16 ms, puis seuls les coefficients EQ modifiés sont transmis ; l'état activé n'est changé que s'il diffère. La perte/reprise de contrôle invalide le cache pour rétablir la courbe. Les erreurs de création et d'application apparaissent au diagnostic.
 
-## Mode 2 — octoStream optimisé
-Le Studio Audio de l'application octoStream Android TV possède déjà un DSP PCM : `tv/src/main/java/com/example/tv/audio/StudioDsp.kt` et `StudioAudioProcessor.kt`, avec 10 bandes, préampli, largeur stéréo, balance et limiteur. C'est le chemin recommandé pour la lecture octoStream. Les réglages sont enregistrés localement dans octoStream.
+## Moteurs
+Mode fidèle par défaut : `DynamicsProcessing` API 28+, dix bandes de pré-EQ, entrée 0 dB, MBC/post-EQ/limiteur absents. Vérification de la configuration relue auprès du moteur ; un refus revient à `Equalizer` avec avertissement. Aucune garantie sur un traitement dynamique ajouté après l'effet par le firmware, un lecteur, la TV ou un ampli. BassBoost et Virtualizer ne sont pas instanciés en mode fidèle. Les bandes fidèles sont initialement plates et séparées des anciens réglages matériels, conservés.
 
-## Limite importante
-Deux APK distincts ne peuvent pas simplement partager un AudioSessionId ou modifier arbitrairement le flux PCM de l'autre. Une intégration OctoEQ -> octoStream demandera un protocole explicite (service/broadcast protégé ou ContentProvider), une vérification de la signature et des changements dans octoStream. **Ce lien n'est pas encore implémenté**. En attendant, ouvrir Studio audio dans octoStream pour le mode optimisé.
+Compatibilité : `Equalizer`, BassBoost et Virtualizer Android selon capacités. Une compensation de volume interne peut subsister. L'application n'essaie pas de la masquer avec LoudnessEnhancer, AGC, augmentation du volume système ou décalage automatique des autres bandes.
 
-## Validation requise
-1. Compiler le projet companion-eq avec Android Studio.
-2. Tester le mode global sur la TV cible, haut-parleurs TV, HDMI et Bluetooth.
-3. Vérifier les interactions télécommande et la persistance des réglages.
-4. Ajouter un mécanisme explicite et sécurisé de synchronisation avec octoStream si nécessaire.
-5. Créer un dépôt indépendant et un pipeline APK signé après validation.
+## Portées mutuellement exclusives
+- Globale : une chaîne sur session 0, expérimentale et dépréciée pour les effets d'insertion.
+- Lecteurs compatibles : annonce de sessions via les broadcasts officiels reçus pendant que le service fonctionne. Une chaîne par session annoncée, bornée à 16, avec déduplication des propriétaires et libération à la clôture. Les identifiants non positifs sont ignorés. Les extras sont des données non fiables et n'autorisent ni exécution de commande ni lancement d'un composant arbitraire.
 
+La portée globale n'est jamais superposée à celle des sessions. Les lecteurs n'émettant pas les annonces ne sont pas découverts. Si plusieurs sessions ont des moteurs différents, leurs coefficients sont interpolés en fréquence à partir du moteur affiché. Changer de moteur principal peut rappeler sa courbe enregistrée ; vérifier Plat pour les comparaisons.
 
-## Mise à jour 0.2.0
-Le service `AudioService` possède désormais les effets de session 0 et reste démarré après destruction de l'Activity. Notification persistante et arrêt explicite ; le cycle de vie du service ne supprime pas les restrictions du routage audio Android. Aucun enregistrement/capture audio, aucune intégration octoStream, aucune garantie globale. Voir README pour la validation et la signature des APK CI.
+## Limites
+Ni root, ni capture/relecture de l'audio, ni intégration octoStream. Pas de garantie toutes applications, HDMI passthrough, offload ou multicanal. Une intégration DSP au lecteur octoStream demanderait des changements explicites de ce lecteur, sans prétendre traiter les autres apps. Voir README pour les sources AOSP et la procédure d'essai sur Mi Box.
+
+## Validation
+Tests de navigation, persistance, configuration sans compression/limiteur, gain général fixe, mises à jour isolées, interpolation entre moteurs et gestion des sessions. CI : tests, lint, APK, signature et manifeste. La réponse acoustique doit être mesurée sur la box réelle ; CI n'en fournit pas de preuve.

@@ -82,7 +82,7 @@ private class LinearEq(session: Int) : EqEngine(session) {
         effect = DynamicsProcessing(0, session, config)
         try {
             effect.setInputGainAllChannelsTo(0f)
-            check(effect.config.preEqBandCount == frequencies.size) { "Configuration EQ rejetée" }
+            LinearConfiguration.validate(effect.config)
         } catch (e: RuntimeException) { effect.release(); throw e }
     }
     override fun writeBand(index: Int, level: Int) {
@@ -92,6 +92,18 @@ private class LinearEq(session: Int) : EqEngine(session) {
 
 @TargetApi(28)
 internal object LinearConfiguration {
+    fun validate(config: DynamicsProcessing.Config) {
+        check(config.isPreEqInUse && config.preEqBandCount == AudioPolicy.centers.size &&
+            !config.isMbcInUse && !config.isPostEqInUse && !config.isLimiterInUse) { "Configuration fidèle rejetée" }
+        for (channel in 0 until config.channelCount) {
+            check(kotlin.math.abs(config.getInputGainByChannelIndex(channel)) < 0.01f) { "Gain général inattendu" }
+            for (band in AudioPolicy.centers.indices) {
+                val actual = config.getPreEqBandByChannelIndex(channel, band)
+                check(actual.isEnabled && kotlin.math.abs(actual.gain) < 0.01f &&
+                    kotlin.math.abs(actual.cutoffFrequency - AudioPolicy.cutoffs[band]) < 1f) { "Bandes fidèles rejetées" }
+            }
+        }
+    }
     fun create(): DynamicsProcessing.Config {
         val preEq = DynamicsProcessing.Eq(true, true, AudioPolicy.centers.size)
         for (i in AudioPolicy.centers.indices) preEq.setBand(i, DynamicsProcessing.EqBand(true, AudioPolicy.cutoffs[i], 0f))

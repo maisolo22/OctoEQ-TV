@@ -57,7 +57,12 @@ class MainActivity : Activity() {
                     val previous = eq
                     eq = audioService?.eq; bass = audioService?.bass; virtualizer = audioService?.virtualizer
                     if (previous !== eq || screenMode != modeToken()) { initEffects(); buildScreen(); power.requestFocus() }
-                    else if (::state.isInitialized) state.text = audioService?.status()
+                    else if (::state.isInitialized) {
+                        state.text = audioService?.status()
+                        enabled = prefs.getBoolean("enabled", true)
+                        power.text = if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ"
+                        power.contentDescription = power.text
+                    }
                 }
             }
             eq = audioService?.eq; bass = audioService?.bass; virtualizer = audioService?.virtualizer
@@ -133,8 +138,12 @@ class MainActivity : Activity() {
         brand.addView(text("POWER YOUR SOUND", 11f, muted))
         header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
         power = addButton(header, if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ") {
-            enabled = !enabled
+            enabled = !prefs.getBoolean("enabled", true)
             prefs.edit().putBoolean("enabled", enabled).apply()
+            if (enabled) {
+                val service = Intent(this, AudioService::class.java)
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+            }
             power.text = if (enabled) "●  EQ ACTIVÉ" else "○  EQ DÉSACTIVÉ"
             power.contentDescription = power.text
         }

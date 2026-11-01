@@ -107,12 +107,14 @@ class AudioService : Service(), SharedPreferences.OnSharedPreferenceChangeListen
             applySettings(); stopSelf(); return START_NOT_STICKY
         }
         stoppedByUser = false
+        applySettings()
         return START_STICKY
     }
     override fun onBind(intent: Intent) = binder
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
         if (key == "faithful" || key == "player_sessions") { rebuild(); return }
         handler.removeCallbacks(update); handler.postDelayed(update, 16)
+        if (key == "enabled") observer?.invoke()
     }
     private fun applySettings() {
         val enabled = prefs.getBoolean("enabled", true) && !stoppedByUser

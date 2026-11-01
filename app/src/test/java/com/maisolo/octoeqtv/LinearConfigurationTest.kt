@@ -11,6 +11,7 @@ import org.robolectric.annotation.Config
 class LinearConfigurationTest {
     @Test fun faithfulEngineHasNoCompressionLimiterOrAutomaticInputAttenuation() {
         val config = LinearConfiguration.create()
+        LinearConfiguration.validate(config)
         assertTrue(config.isPreEqInUse)
         assertFalse(config.isMbcInUse)
         assertFalse(config.isPostEqInUse)
@@ -25,5 +26,11 @@ class LinearConfigurationTest {
                 assertEquals(AudioPolicy.cutoffs[i], eq.getBand(i).cutoffFrequency, 0f)
             }
         }
+    }
+    @Test(expected = IllegalStateException::class)
+    fun rejectAnOemConfigWithUnexpectedGlobalAttenuation() {
+        val config = LinearConfiguration.create()
+        config.setInputGainAllChannelsTo(-6f)
+        LinearConfiguration.validate(config)
     }
 }
