@@ -1,22 +1,52 @@
 package com.maisolo.octoeqtv
 
 import android.app.*
-import android.content.Intent
-import android.content.SharedPreferences
+import android.content.*
 import android.media.audiofx.*
 import android.os.*
 
-/** Owns native effects independently of the Activity. Never captures audio. */
+/** Persistent user-started engine. Global and player-session routes are mutually exclusive. */
 @Suppress("DEPRECATION")
 class AudioService : Service(), SharedPreferences.OnSharedPreferenceChangeListener {
     inner class LocalBinder : Binder() { val service get() = this@AudioService }
-    var eq: Equalizer? = null; private set
-    var bass: BassBoost? = null; private set
-    var virtualizer: Virtualizer? = null; private set
+    private data class Effects(val eq: EqEngine, val bass: BassBoost?, val surround: Virtualizer?)
+    private val engines = linkedMapOf<Int, Effects>()
+    private val sessions = SessionRegistry()
+    var eq: EqEngine? = null; private set
+    val bass get() = engines.values.firstOrNull()?.bass
+    val virtualizer get() = engines.values.firstOrNull()?.surround
+    var observer: (() -> Unit)? = null
     private val prefs by lazy { getSharedPreferences("studio", MODE_PRIVATE) }
     private val handler = Handler(Looper.getMainLooper())
     private val update = Runnable { applySettings() }
     private val binder = LocalBinder()
+    private var error: String? = null
+    private var receiverRegistered = false
+    private var stoppedByUser = false
+    private val receiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (stoppedByUser || !prefs.getBoolean("player_sessions", false)) return
+            val id = intent.getIntExtra(AudioEffect.EXTRA_AUDIO_SESSION, -1)
+            val owner = intent.getStringExtra(AudioEffect.EXTRA_PACKAGE_NAME) ?: return
+            if (!AudioPolicy.validSession(id, owner) || owner.length > 255) return
+            when (intent.action) {
+                AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION -> if (sessions.open(id, owner)) {
+                    if (!createEngine(id)) sessions.forget(id)
+                    updatePrimary(); applySettings(); observer?.invoke()
+                }
+                AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION -> if (sessions.close(id, owner)) {
+                    release(engines.remove(id)); updatePrimary(); observer?.invoke()
+                }
+            }
+        }
+    }
+    fun status(): String {
+        val route = if (prefs.getBoolean("player_sessions", false)) "Sessions compatibles : ${engines.size}" else "Global expérimental"
+        val engine = eq
+        val control = engine?.let { runCatching { if (it.hasControl()) "contrôle acquis" else "contrôle indisponible" }.getOrDefault("contrôle perdu") }
+        return listOfNotNull(route, engine?.label, control, error,
+            if (engine == null && prefs.getBoolean("player_sessions", false)) "Relancer la lecture dans un lecteur compatible" else null).joinToString(" • ")
+    }
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
@@ -25,54 +55,98 @@ class AudioService : Service(), SharedPreferences.OnSharedPreferenceChangeListen
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, AudioService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "audio") else Notification.Builder(this)
-        val notification = builder.setSmallIcon(R.drawable.ic_octoeq).setContentTitle("OctoEQ TV • moteur audio")
-            .setContentText("Effets globaux expérimentaux • ouvrir pour régler")
-            .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null, "Arrêter", stop).build()).build()
-        startForeground(1, notification)
-        eq = runCatching { Equalizer(0, 0) }.getOrNull()
-        bass = runCatching { BassBoost(0, 0) }.getOrNull()
-        virtualizer = runCatching { Virtualizer(0, 0) }.getOrNull()
-        // Reapply when an OEM gives control back to this client.
-        listOfNotNull(eq, bass, virtualizer).forEach { effect ->
-            effect.setControlStatusListener { _, granted -> if (granted) handler.post(update) }
+        startForeground(1, builder.setSmallIcon(R.drawable.ic_octoeq).setContentTitle("OctoEQ TV • moteur audio")
+            .setContentText("Compatibilité selon le lecteur et la sortie PCM • ouvrir pour régler")
+            .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null, "Arrêter", stop).build()).build())
+        val filter = IntentFilter().apply {
+            addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION)
+            addAction(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION)
         }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        else registerReceiver(receiver, filter)
+        receiverRegistered = true
         prefs.registerOnSharedPreferenceChangeListener(this)
-        applySettings()
+        rebuild()
+    }
+    private fun createEngine(id: Int): Boolean {
+        val faithful = prefs.getBoolean("faithful", true)
+        val (engine, reason) = EqEngine.create(id, faithful)
+        error = reason
+        if (engine == null) return false
+        // Faithful mode does not instantiate legacy BassBoost/Virtualizer, even after EQ fallback.
+        val bass = if (!faithful) runCatching { BassBoost(0, id) }.getOrNull() else null
+        val surround = if (!faithful) runCatching { Virtualizer(0, id) }.getOrNull() else null
+        engines[id] = Effects(engine, bass, surround)
+        listOfNotNull(engine.nativeEffect, bass, surround).forEach { effect ->
+            effect.setControlStatusListener { _, granted ->
+                handler.post {
+                    if (granted) { engine.invalidate(); applySettings() }
+                    observer?.invoke()
+                }
+            }
+        }
+        return true
+    }
+    private fun updatePrimary() { eq = engines.values.firstOrNull()?.eq }
+    private fun release(effects: Effects?) {
+        effects ?: return
+        runCatching { effects.eq.nativeEffect.setControlStatusListener(null) }
+        listOfNotNull(effects.eq.nativeEffect, effects.bass, effects.surround).forEach { runCatching { it.release() } }
+    }
+    private fun rebuild() {
+        engines.values.forEach { release(it) }; engines.clear(); eq = null; error = null
+        // Recreate only known live sessions; never layer session processing over global EQ.
+        if (prefs.getBoolean("player_sessions", false)) sessions.ids().forEach { createEngine(it) }
+        else { sessions.clear(); createEngine(0) }
+        updatePrimary(); applySettings(); observer?.invoke()
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "STOP") {
+            stoppedByUser = true
             prefs.edit().putBoolean("enabled", false).apply()
             applySettings(); stopSelf(); return START_NOT_STICKY
         }
+        stoppedByUser = false
         return START_STICKY
     }
     override fun onBind(intent: Intent) = binder
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-        handler.removeCallbacks(update); handler.post(update)
+        if (key == "faithful" || key == "player_sessions") { rebuild(); return }
+        handler.removeCallbacks(update); handler.postDelayed(update, 16)
     }
     private fun applySettings() {
-        val enabled = prefs.getBoolean("enabled", true)
-        eq?.let { effect -> runCatching {
-            val range = effect.bandLevelRange
-            for (i in 0 until effect.numberOfBands.toInt()) effect.setBandLevel(i.toShort(),
-                prefs.getInt("band_$i", 0).coerceIn(range[0].toInt(), range[1].toInt()).toShort())
-            effect.enabled = enabled
-        } }
-        bass?.let { effect -> runCatching {
-            val strength = prefs.getInt("bass", 0).coerceIn(0, 1000)
-            if (effect.strengthSupported) effect.setStrength(strength.toShort())
-            effect.enabled = enabled && strength > 0 && effect.strengthSupported
-        } }
-        virtualizer?.let { effect -> runCatching {
-            val strength = prefs.getInt("surround", 0).coerceIn(0, 1000)
-            if (effect.strengthSupported) effect.setStrength(strength.toShort())
-            effect.enabled = enabled && strength > 0 && effect.strengthSupported
-        } }
+        val enabled = prefs.getBoolean("enabled", true) && !stoppedByUser
+        val reference = eq ?: return
+        val requested = IntArray(reference.frequencies.size) { prefs.getInt(reference.gainKeys[it], 0) }
+        for (effects in engines.values) {
+            val engine = effects.eq
+            try {
+                val range = engine.bandLevelRange
+                val levels = AudioPolicy.mapCurve(reference.frequencies, requested, engine.frequencies, range[0].toInt(), range[1].toInt())
+                engine.apply(levels, enabled)
+                effects.bass?.let {
+                    val strength = prefs.getInt("bass", 0).coerceIn(0, 1000)
+                    if (it.strengthSupported) it.setStrength(strength.toShort())
+                    val wanted = enabled && strength > 0 && it.strengthSupported
+                    if (it.enabled != wanted) check(it.setEnabled(wanted) == AudioEffect.SUCCESS)
+                }
+                effects.surround?.let {
+                    val strength = prefs.getInt("surround", 0).coerceIn(0, 1000)
+                    if (it.strengthSupported) it.setStrength(strength.toShort())
+                    val wanted = enabled && strength > 0 && it.strengthSupported
+                    if (it.enabled != wanted) check(it.setEnabled(wanted) == AudioEffect.SUCCESS)
+                }
+            } catch (e: RuntimeException) {
+                val message = "Session ${engine.session} : réglage refusé (${e.javaClass.simpleName})"
+                if (error != message) { error = message; observer?.invoke() }
+            }
+        }
     }
     override fun onDestroy() {
+        observer = null
         prefs.unregisterOnSharedPreferenceChangeListener(this); handler.removeCallbacksAndMessages(null)
-        listOfNotNull(eq, bass, virtualizer).forEach { runCatching { it.release() } }
-        eq = null; bass = null; virtualizer = null
+        if (receiverRegistered) unregisterReceiver(receiver)
+        engines.values.forEach { release(it) }; engines.clear(); sessions.clear(); eq = null
         super.onDestroy()
     }
 }
