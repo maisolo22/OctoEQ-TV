@@ -4,6 +4,7 @@ import android.app.*
 import android.content.*
 import android.media.audiofx.*
 import android.os.*
+import androidx.core.content.ContextCompat
 
 /** Persistent user-started engine. Global and player-session routes are mutually exclusive. */
 @Suppress("DEPRECATION")
@@ -62,8 +63,7 @@ class AudioService : Service(), SharedPreferences.OnSharedPreferenceChangeListen
             addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION)
             addAction(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION)
         }
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-        else registerReceiver(receiver, filter)
+        ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
         receiverRegistered = true
         prefs.registerOnSharedPreferenceChangeListener(this)
         rebuild()

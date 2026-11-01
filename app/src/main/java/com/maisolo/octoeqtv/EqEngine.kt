@@ -82,7 +82,7 @@ private class LinearEq(session: Int) : EqEngine(session) {
         effect = DynamicsProcessing(0, session, config)
         try {
             effect.setInputGainAllChannelsTo(0f)
-            LinearConfiguration.validate(effect.config)
+            LinearConfiguration.validate(effect.config, effect.channelCount)
         } catch (e: RuntimeException) { effect.release(); throw e }
     }
     override fun writeBand(index: Int, level: Int) {
@@ -92,10 +92,11 @@ private class LinearEq(session: Int) : EqEngine(session) {
 
 @TargetApi(28)
 internal object LinearConfiguration {
-    fun validate(config: DynamicsProcessing.Config) {
+    fun validate(config: DynamicsProcessing.Config, channelCount: Int = 2) {
+        check(channelCount in 1..32) { "Nombre de canaux invalide" }
         check(config.isPreEqInUse && config.preEqBandCount == AudioPolicy.centers.size &&
             !config.isMbcInUse && !config.isPostEqInUse && !config.isLimiterInUse) { "Configuration fidèle rejetée" }
-        for (channel in 0 until 2) {
+        for (channel in 0 until channelCount) {
             check(kotlin.math.abs(config.getInputGainByChannelIndex(channel)) < 0.01f) { "Gain général inattendu" }
             for (band in AudioPolicy.centers.indices) {
                 val actual = config.getPreEqBandByChannelIndex(channel, band)
